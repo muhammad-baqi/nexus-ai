@@ -29,12 +29,12 @@ application code exists yet (see `PHASES.md`). Day 1 (scaffold) is the first fea
 
 ## Day 1 — Foundation (0 user-facing features — infra only)
 
-- [ ] Repo scaffold (Next.js App Router + TS + Tailwind + shadcn/ui + ESLint/Prettier)
-- [ ] Docker local dev (`docker compose up` works)
-- [ ] Supabase clients wired for both environments (staging/prod projects, local CLI for dev)
-- [ ] Vitest + Playwright configured
+- [x] Repo scaffold (Next.js 16 App Router + TS + Tailwind + shadcn/ui + ESLint/Prettier)
+- [x] Docker local dev (`docker compose up` works)
+- [~] Supabase clients wired for both environments — local CLI stack done; `nexus-staging`/`nexus-prod` hosted projects pending
+- [x] Vitest + Playwright configured
 - [ ] Initial database migration scaffolding + RLS convention in place
-- [ ] Design tokens / component library base (shadcn/ui installed via MCP)
+- [x] Design tokens / component library base (shadcn/ui, base-nova preset)
 - [ ] **Nothing user-facing ships today — that's expected.**
 
 ## Day 2 — Core Platform (v0.1) — release Tuesday (0/16)
