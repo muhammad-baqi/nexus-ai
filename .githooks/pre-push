@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Block pushes to protected branches. The human owns promotion to staging/main.
+
+protected="main staging"
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+  ref="${remote_ref#refs/heads/}"
+  for p in $protected; do
+    if [ "$ref" = "$p" ]; then
+      echo "✋ Pushing to '$p' is not allowed for the agent." >&2
+      echo "   develop → staging → main promotion is manual/human (see git-workflow.md)." >&2
+      exit 1
+    fi
+  done
+done
+
+exit 0

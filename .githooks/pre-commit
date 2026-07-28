@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Block direct commits to protected branches and enforce branch naming.
+# The agent must work on feature/, fix/, or chore/ branches off develop — never on main/staging.
+
+branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)"
+
+case "$branch" in
+  main|staging)
+    echo "✋ Direct commits to '$branch' are not allowed. The human owns main/staging." >&2
+    echo "   Branch off develop with feature/ or fix/ instead." >&2
+    exit 1 ;;
+  develop|feature/*|fix/*|hotfix/*|chore/*)
+    : ;;  # allowed
+  *)
+    echo "⚠️  Branch '$branch' doesn't match feature/ fix/ hotfix/ chore/ (or develop)." >&2
+    echo "   Rename it before committing (see .claude/docs/git-workflow.md)." >&2
+    exit 1 ;;
+esac
+
+exit 0

@@ -1,0 +1,63 @@
+version: "3.9"
+
+# For quick early iteration before Supabase is wired up, `db` gives you a plain
+# Postgres. Once Supabase is in the picture, prefer `supabase start` (Supabase
+# CLI) for local dev instead — it gives you Postgres + Auth + Storage + Studio
+# matching what staging/prod actually run, and this app service can point at
+# it via DATABASE_URL / SUPABASE_URL env vars instead of the bare `db` service.
+# See docs/deployment-model.md.
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    volumes:
+      - .:/app
+      - node_modules:/app/node_modules   # named volume avoids host<->container node_modules conflicts
+      - next_cache:/app/.next            # persists Next.js build cache across restarts
+    environment:
+      - NODE_ENV=development
+      - NEXT_TELEMETRY_DISABLED=1
+      - DATABASE_URL=postgres://app:app@db:5432/app
+      # Once Supabase local stack is running (supabase start), swap to:
+      # - NEXT_PUBLIC_SUPABASE_URL=http://host.docker.internal:54321
+      # - NEXT_PUBLIC_SUPABASE_ANON_KEY=<from `supabase status`>
+    depends_on:
+      - db
+    command: npm run dev
+
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=app
+      - POSTGRES_PASSWORD=app
+      - POSTGRES_DB=app
+    ports:
+      - "5432:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+
+  # Dedicated container for running Playwright locally with the exact same
+  # browser versions as CI.
+  playwright:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - .:/app
+      - node_modules:/app/node_modules
+    depends_on:
+      - app
+    environment:
+      - BASE_URL=http://app:3000
+    entrypoint: ["npx", "playwright", "test"]
+    profiles: ["test"]   # run with: docker compose --profile test run playwright
+
+volumes:
+  node_modules:
+  next_cache:
+  db_data:

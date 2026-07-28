@@ -1,0 +1,81 @@
+name: Claude QA (Playwright)
+
+# Nexus's /ship-feature self-merges straight into develop (no PR) — see
+# .claude/docs/git-workflow.md. So:
+# - Push to develop: fast smoke suite, runs against a local build. Plain
+#   Playwright CLI — fast, deterministic, no LLM needed for a pass/fail on
+#   known-good tests. Informational (the merge already happened); a failure
+#   gets fixed via a fix/* branch like any other bug.
+# - Push to staging: full regression suite against the deployed staging URL,
+#   run through the qa-playwright subagent so failures come back with an
+#   actual narrative (what broke, evidence) instead of just a red X. This is
+#   the real gate to read before promoting staging -> main.
+#
+# Requires repo secrets: CLAUDE_CODE_OAUTH_TOKEN, STAGING_URL.
+
+on:
+  push:
+    branches: [develop, staging]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  smoke-tests:
+    if: github.ref == 'refs/heads/develop'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run build
+      - name: Start app
+        run: npm run start & npx wait-on http://localhost:3000
+      - name: Run smoke tests
+        run: npx playwright test --grep @smoke
+
+      - name: Upload report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-smoke-report
+          path: playwright-report/
+          retention-days: 7
+
+  full-regression:
+    if: github.ref == 'refs/heads/staging'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+
+      - name: Run qa-playwright subagent against staging
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt: |
+            Use the qa-playwright subagent (.claude/agents/qa-playwright.md) to
+            run the full regression pass against ${{ secrets.STAGING_URL }}.
+            Read acceptance criteria from docs/01_MVP/ for the flows most
+            likely affected by recent commits (check `git log` on this branch
+            since the last staging deploy for hints). Post the pass/fail
+            report as a commit comment on this push.
+          claude_args: "--model claude-sonnet-4-6"
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-full-report
+          path: playwright-report/
+          retention-days: 14

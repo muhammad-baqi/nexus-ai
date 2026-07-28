@@ -1,0 +1,51 @@
+name: Claude Code Review
+
+# Nexus's /ship-feature self-merges straight into develop (no PR) — see
+# .claude/docs/git-workflow.md. So this runs an AI review pass on every PUSH to
+# develop (an informational second look after the agent's own self-review),
+# and stays PR-triggered for staging/main in case a human ever opens a PR for
+# a promotion or hotfix. Never approves or blocks merge on its own.
+#
+# Requires repo secret: CLAUDE_CODE_OAUTH_TOKEN (see SETUP_CHECKLIST.md, or run
+# /install-github-app from inside Claude Code as a repo admin to set this up
+# automatically).
+
+on:
+  push:
+    branches: [develop]
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches: [staging, main]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: ai-review-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  ai-review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run code-reviewer subagent
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt: |
+            Use the code-reviewer subagent (.claude/agents/code-reviewer.md) to
+            review the diff introduced by this event — for a push, that's the
+            latest commit(s) against the previous HEAD of develop; for a pull
+            request, the diff against ${{ github.event.pull_request.base.ref }}.
+            Post the review as a single PR comment (if this ran on a pull_request)
+            or a commit comment (if this ran on a push) using the Critical /
+            Warnings / Suggestions / Verdict format defined in that subagent's
+            system prompt. This is a second-pass, informational review only — do
+            not approve, request changes, or edit any files. The merge (if any)
+            has already happened by the time this runs.
+          claude_args: "--model claude-sonnet-4-6"
