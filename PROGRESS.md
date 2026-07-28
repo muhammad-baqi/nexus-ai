@@ -13,10 +13,10 @@ application code exists yet (see `PHASES.md`). Day 1 (scaffold) is the first fea
 ## Setup gate (before any code)
 
 - [x] `.claude/`, `.github/` in place (this package)
-- [~] Git repo + GitHub remote; branches `develop`, `staging`, `main` created — `develop` pushed, `staging`/`main` pending (human-created)
+- [x] Git repo + GitHub remote; branches `develop`, `staging`, `main` created and pushed
 - [x] Git hooks active: `git config core.hooksPath .githooks` (blocks commits/pushes to staging/main)
-- [~] Accounts created (below)
-- [ ] `CLAUDE_CODE_OAUTH_TOKEN` repo secret set (`/install-github-app`, or manually — see `SETUP_CHECKLIST.md`)
+- [x] Accounts created (below)
+- [x] `CLAUDE_CODE_OAUTH_TOKEN` repo secret set (via `claude setup-token` + manual GitHub secret, since `gh` CLI wasn't available for `/install-github-app`)
 
 ### Accounts / credentials
 
