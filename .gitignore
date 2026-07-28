@@ -19,9 +19,6 @@ coverage/
 playwright-report/
 test-results/
 
-# Supabase local
-.supabase/
-
 # Skills CLI (npx/pnpm dlx skills) — local install, restored from skills-lock.json
 .agents/
 .claude/skills/shadcn

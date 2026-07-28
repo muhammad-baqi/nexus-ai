@@ -1,0 +1,16 @@
+node_modules
+.next
+.git
+.github
+.githooks
+.agents
+.claude/skills
+supabase/.branches
+supabase/.temp
+coverage
+playwright-report
+test-results
+*.log
+.env*.local
+docs
+*.md
