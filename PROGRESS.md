@@ -5,8 +5,9 @@
 > and release cadence are `docs/00_Project/Roadmap.md`.
 > `[ ]` = not started · `[~]` = in progress · `[x]` = done & committed.
 
-Last updated: 2026-07-28 — repo carries planning docs + this workflow package only. No
-application code exists yet (see `PHASES.md`). Day 1 (scaffold) is the first feature work.
+Last updated: 2026-07-28 — Day 1 (Foundation) complete: scaffold, Docker, Vitest/Playwright,
+Supabase wired (local + `nexus-staging`), initial schema + RLS migration applied and verified.
+Vercel connection is the only remaining blocker before a staging deploy. Day 2 not started.
 
 ---
 
@@ -31,11 +32,14 @@ application code exists yet (see `PHASES.md`). Day 1 (scaffold) is the first fea
 
 - [x] Repo scaffold (Next.js 16 App Router + TS + Tailwind + shadcn/ui + ESLint/Prettier)
 - [x] Docker local dev (`docker compose up` works)
-- [~] Supabase clients wired for both environments — local CLI stack done; `nexus-staging`/`nexus-prod` hosted projects pending
+- [x] Supabase clients wired — local CLI stack + `nexus-staging` hosted project; `nexus-prod` schema push deferred to the v0.1 production release (Day 2)
 - [x] Vitest + Playwright configured
-- [ ] Initial database migration scaffolding + RLS convention in place
+- [x] Initial database migration scaffolding + RLS convention in place (`supabase/migrations/001_initial_schema.sql` — 13 tables, RLS on all, verified locally and against `nexus-staging`)
 - [x] Design tokens / component library base (shadcn/ui, base-nova preset)
 - [ ] **Nothing user-facing ships today — that's expected.**
+
+**Day 1 status: code-complete.** Only remaining blocker before an actual staging deploy is
+connecting Vercel to the repo (dashboard work, not code) — see note below.
 
 ## Day 2 — Core Platform (v0.1) — release Tuesday (0/16)
 
