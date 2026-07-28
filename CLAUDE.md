@@ -60,11 +60,14 @@ track *how much* of it is built.
 
 ## Tech stack (summary)
 
-Next.js 14 App Router + TypeScript + Tailwind + **shadcn/ui (+ shadcn MCP)** · Supabase
+Next.js 16 App Router + TypeScript + Tailwind + **shadcn/ui (+ shadcn MCP)** · Supabase
 (Postgres + Auth + Storage) — separate project per environment · Vercel (Fluid Compute,
 default — don't add `export const runtime = 'edge'` to new routes) · Vitest + Playwright ·
 Docker for local dev (matches the Linux runtime Vercel actually runs). Full stack rationale →
 `docs/03_Architecture/Tech_Stack.md`. Deploy specifics → `.claude/docs/infrastructure.md`.
+
+**Next.js 16 note:** middleware.ts is renamed `proxy.ts` (same runtime/purpose, see
+`lib/supabase/proxy.ts` + root `proxy.ts`) — don't create a `middleware.ts` file.
 
 ## Local dev — Docker
 

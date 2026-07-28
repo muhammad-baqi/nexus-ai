@@ -70,7 +70,7 @@ claude
 
 > **Prompt — Scaffold**
 > Read CLAUDE.md fully, including the doc index at the bottom, and skim `docs/00_Project/` and
-> `docs/03_Architecture/Tech_Stack.md`. Scaffold a Next.js 14 App Router project with
+> `docs/03_Architecture/Tech_Stack.md`. Scaffold a Next.js 16 App Router project with
 > TypeScript, Tailwind, ESLint/Prettier, ESLint config matching CLAUDE.md's conventions.
 > Install shadcn/ui (via the shadcn MCP in `.mcp.json`) and set up the base design tokens.
 > Install: @supabase/supabase-js, @supabase/ssr, zod, resend, date-fns. Add Vitest and
@@ -133,8 +133,10 @@ Tick the remaining Day 1 items in `PROGRESS.md` once Vitest/Playwright are confi
 > Build "Register", "Email verification", "Login", and "Logout" per
 > `docs/01_MVP/Authentication.md` — Supabase Auth email/password, the generic
 > "Invalid email or password" error (never reveal which part was wrong), the unverified-login
-> state with a rate-limited resend option, and middleware protecting all routes except the
-> landing page. Follow `.claude/rules/api-routes.md` for any route handlers needed. Tell me how
+> state with a rate-limited resend option, and proxy.ts (Next.js 16's rename of middleware —
+> already stubbed with the Supabase session refresh, see lib/supabase/proxy.ts) protecting all
+> routes except the landing page. Follow `.claude/rules/api-routes.md` for any route handlers
+> needed. Tell me how
 > to test locally.
 
 Test: register, check the local Inbucket/mail capture for the verification email, verify, log
