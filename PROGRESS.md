@@ -12,18 +12,18 @@ application code exists yet (see `PHASES.md`). Day 1 (scaffold) is the first fea
 
 ## Setup gate (before any code)
 
-- [ ] `.claude/`, `.github/` in place (this package)
-- [ ] Git repo + GitHub remote; branches `develop`, `staging`, `main` created
-- [ ] Git hooks active: `git config core.hooksPath .githooks` (blocks commits/pushes to staging/main)
-- [ ] Accounts created (below)
+- [x] `.claude/`, `.github/` in place (this package)
+- [~] Git repo + GitHub remote; branches `develop`, `staging`, `main` created — `develop` pushed, `staging`/`main` pending (human-created)
+- [x] Git hooks active: `git config core.hooksPath .githooks` (blocks commits/pushes to staging/main)
+- [~] Accounts created (below)
 - [ ] `CLAUDE_CODE_OAUTH_TOKEN` repo secret set (`/install-github-app`, or manually — see `SETUP_CHECKLIST.md`)
 
 ### Accounts / credentials
 
-- [ ] GitHub — repo created
-- [ ] Vercel (Hobby) — not yet connected to the repo
-- [ ] Supabase — two free projects: `nexus-staging`, `nexus-prod`
-- [ ] Claude Code CLI — installed, logged into Pro/Max subscription
+- [x] GitHub — repo created (`muhammad-baqi/nexus-ai`)
+- [x] Vercel (Hobby) — account created, not yet connected to the repo
+- [x] Supabase — two free projects: `nexus-staging`, `nexus-prod`
+- [x] Claude Code CLI — installed, logged into Pro/Max subscription
 
 ---
 
