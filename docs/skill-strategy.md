@@ -50,8 +50,10 @@ that doesn't exist. Install these with the commands below during Phase 0 setup
 - **`laguagu/claude-code-nextjs-skills`** — a bundle matching this exact stack:
   `web-design-guidelines` (UI/UX review against real interface guidelines),
   `next-best-practices`, `react-best-practices`, `supabase-postgres-best-practices`.
-  Add via `/plugin marketplace add laguagu/claude-code-nextjs-skills` inside a
-  Claude Code session, then `/plugin install <skill-name>@claude-code-nextjs-skills`.
+  This is **not** a plugin marketplace (no `.claude-plugin/marketplace.json`), so
+  `/plugin marketplace add` doesn't work against it — it's a plain skills collection
+  meant to be copied. Already vendored in this repo under `.claude/skills/` (manual
+  copy, method 3 in `SKILLS.md`).
 - **`@playwright/mcp`** (npm, official Microsoft/Playwright package) — the actual MCP
   server the `qa-playwright` subagent in this repo depends on:
   `npx @playwright/mcp@latest`. Not a Claude-specific package; it's Playwright's own

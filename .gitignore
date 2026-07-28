@@ -24,7 +24,8 @@ test-results/
 
 # Skills CLI (npx/pnpm dlx skills) — local install, restored from skills-lock.json
 .agents/
-.claude/skills/
+.claude/skills/shadcn
+.claude/skills/migrate-radix-to-base
 
 # Misc
 .DS_Store

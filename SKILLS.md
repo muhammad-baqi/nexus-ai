@@ -59,12 +59,13 @@ Install these during Phase 0/1 setup (`PHASES.md`), not before you need them:
 - **`laguagu/claude-code-nextjs-skills`** — bundle matching this exact stack:
   `web-design-guidelines` (UI/UX review against real interface guidelines, not
   vibes), `next-best-practices`, `react-best-practices`,
-  `supabase-postgres-best-practices`.
-  ```
-  /plugin marketplace add laguagu/claude-code-nextjs-skills
-  /plugin install web-design-guidelines@claude-code-nextjs-skills
-  /plugin install supabase-postgres-best-practices@claude-code-nextjs-skills
-  ```
+  `supabase-postgres-best-practices`. **Not a plugin marketplace** — it's a
+  plain skills collection (no `.claude-plugin/marketplace.json`), so
+  `/plugin marketplace add` fails against it. Install via manual copy instead
+  (method 3 above) — already done in this repo, vendored under
+  `.claude/skills/{next-best-practices,react-best-practices,web-design-guidelines,supabase-postgres-best-practices}`
+  (MIT-licensed, copied 2026-07-28). To refresh: re-clone the repo and re-copy
+  those four folders.
 - **Anthropic's official plugin directory** (`claude.com/plugins`) — the
   `frontend-design` and `code-review` plugins are worth a look; skip
   `frontend-design` if you've already installed `web-design-guidelines` above,
