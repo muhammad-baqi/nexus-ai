@@ -71,3 +71,12 @@ leave them as a style reference; either is fine.)*
 - [x] A mocked network/server error shows a retry-able message, distinct from the invalid-credentials copy
 - [x] The submit button is never left stuck disabled after an error
 - [ ] (Playwright `@smoke`) Register, verify via the real Mailpit link, then log in — lands on `/` with a session cookie set — test written (`e2e/login.spec.ts`), expected to hit the same known `playwright`-in-Docker blocker as the other two e2e specs; verified live instead via direct HTTP requests per PROGRESS.md's established approach.
+
+## Logout (Day 2)
+- [x] Clicking "Log out" calls `supabase.auth.signOut()`
+- [x] A successful sign-out redirects to `/` and refreshes
+- [x] A mocked sign-out failure shows a retry-able inline error and does not navigate away
+- [x] The logout button is never left stuck disabled after an error
+- [x] The landing page renders "Signed in as {email}" and a working Logout button when `getUser()` returns a user
+- [x] The landing page renders Log in/Register links and no Logout button when `getUser()` returns no user
+- [ ] (Playwright `@smoke`) Register, verify via the real Mailpit link (already signed in), confirm `/` shows the signed-in state, log out, confirm no session cookie remains — test written (`e2e/logout.spec.ts`), expected to hit the same known `playwright`-in-Docker blocker as the other three e2e specs; verified live instead via direct HTTP + cookie checks.

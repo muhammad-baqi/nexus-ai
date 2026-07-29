@@ -5,7 +5,8 @@
 > and release cadence are `docs/00_Project/Roadmap.md`.
 > `[ ]` = not started · `[~]` = in progress · `[x]` = done & committed.
 
-Last updated: 2026-07-29 — Day 2: Register, Email verification, and Login shipped (3/16). Vercel is
+Last updated: 2026-07-29 — Day 2: Register, Email verification, Login, and Logout shipped
+(4/16). Vercel is
 connected (one project tracking `main`; a second project tracking `staging` is still
 outstanding, see infra note below). `develop`/`staging`/`main` were promoted early as a
 connection test — `nexus-prod` Supabase schema push is still outstanding too.
@@ -54,7 +55,7 @@ connection test — `nexus-prod` Supabase schema push is still outstanding too.
   issue, not real network unreachability) — blocks running `e2e/*.spec.ts` via
   `docker compose --profile test run playwright` until resolved.
 
-## Day 2 — Core Platform (v0.1) — release Tuesday (3/16)
+## Day 2 — Core Platform (v0.1) — release Tuesday (4/16)
 
 - [x] Register (email + password) — `app/register`, `components/auth/register-form.tsx`; no
   custom API route (Supabase Auth client SDK direct from the frontend, per API_Design.md).
@@ -107,7 +108,16 @@ connection test — `nexus-prod` Supabase schema push is still outstanding too.
   helper (picked the oldest message for an address instead of the newest) — fixed and reverified
   live with two messages on one address. `e2e/login.spec.ts` written but not yet green, same
   known `playwright`-in-Docker blocker as the other two e2e specs.
-- [ ] Logout
+- [x] Logout — `components/auth/logout-button.tsx` calls
+  `supabase.auth.signOut({ scope: "global" })` (explicit rather than relying on the library
+  default), then redirects to `/`. Confirmed live that this genuinely revokes the session
+  server-side — an access token that worked before logout got a real `session_not_found` from
+  Supabase after, not just a client-side cookie clear. `app/page.tsx` (still the untouched
+  `create-next-app` scaffold until now) became an auth-aware Server Component since there's no
+  Dashboard yet: signed-in shows "Signed in as {email}" + Logout, signed-out shows Log
+  in/Register links. 39/39 unit tests green, typecheck clean. Self-review: clean approve, no
+  critical/warning findings; applied the one suggestion (explicit `signOut` scope).
+  `e2e/logout.spec.ts` written but not yet green, same known `playwright`-in-Docker blocker.
 - [ ] Password reset (request + set new password)
 - [ ] Change password (logged in)
 - [ ] Delete account (cascading)
