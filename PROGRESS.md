@@ -5,9 +5,10 @@
 > and release cadence are `docs/00_Project/Roadmap.md`.
 > `[ ]` = not started · `[~]` = in progress · `[x]` = done & committed.
 
-Last updated: 2026-07-28 — Day 1 (Foundation) complete: scaffold, Docker, Vitest/Playwright,
-Supabase wired (local + `nexus-staging`), initial schema + RLS migration applied and verified.
-Vercel connection is the only remaining blocker before a staging deploy. Day 2 not started.
+Last updated: 2026-07-29 — Day 2 started: Register (email + password) shipped. Vercel is
+connected (one project tracking `main`; a second project tracking `staging` is still
+outstanding, see infra note below). `develop`/`staging`/`main` were promoted early as a
+connection test — `nexus-prod` Supabase schema push is still outstanding too.
 
 ---
 
@@ -38,12 +39,37 @@ Vercel connection is the only remaining blocker before a staging deploy. Day 2 n
 - [x] Design tokens / component library base (shadcn/ui, base-nova preset)
 - [ ] **Nothing user-facing ships today — that's expected.**
 
-**Day 1 status: code-complete.** Only remaining blocker before an actual staging deploy is
-connecting Vercel to the repo (dashboard work, not code) — see note below.
+**Day 1 status: done.** Vercel is connected and deploying on push.
 
-## Day 2 — Core Platform (v0.1) — release Tuesday (0/16)
+**Outstanding infra (not blocking Day 2 feature work, revisit before relying on them):**
+- Second Vercel project tracking `staging` (currently only one project, tracking `main`);
+  `nexus-prod` Supabase schema push.
+- Local dev: the browser can't reach `NEXT_PUBLIC_SUPABASE_URL=http://host.docker.internal:54321`
+  (only resolvable from inside the app's Docker container, not from a host browser) — blocks
+  driving a real signed-in flow against local Supabase from a host browser. Needs either a
+  `127.0.0.1 host.docker.internal` hosts-file entry (requires admin rights) or splitting the
+  client- and server-side Supabase URL env vars.
+- The `playwright` Docker service hits `ERR_SSL_PROTOCOL_ERROR` launching Chromium against a
+  plain-http URL inside its container (curl to the same URL works fine, so it's a browser-launch
+  issue, not real network unreachability) — blocks running `e2e/*.spec.ts` via
+  `docker compose --profile test run playwright` until resolved.
 
-- [ ] Register (email + password)
+## Day 2 — Core Platform (v0.1) — release Tuesday (1/16)
+
+- [x] Register (email + password) — `app/register`, `components/auth/register-form.tsx`; no
+  custom API route (Supabase Auth client SDK direct from the frontend, per API_Design.md).
+  Unit + component tests green (12/12), typecheck/lint clean. Manually driven in a real
+  browser via Claude-in-Chrome — form render, validation, and the error state all confirmed
+  live; the true happy-path ("check your email") wasn't confirmed against a live backend in a
+  real browser due to two local-dev environment gaps (see note below) — it is covered by a
+  mocked component test exercising the same render path, and by `e2e/register.spec.ts`
+  (written, not yet green — same gaps). Also fixed several latent infra bugs this feature was
+  the first to exercise: Docker's Node 20 image vs. deps requiring Node ≥22 (jsdom,
+  `@supabase/supabase-js`, `@testing-library/jest-dom`) — bumped to `node:22-bookworm-slim`;
+  Vitest missing Testing Library's `afterEach(cleanup)`; the `playwright` Docker service never
+  had browsers installed; local Supabase had `enable_confirmations = false`, contradicting the
+  spec and this project's own test instructions.
+- [ ] Email verification
 - [ ] Email verification
 - [ ] Login
 - [ ] Logout
