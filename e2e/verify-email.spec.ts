@@ -1,23 +1,8 @@
 import { expect, test } from "@playwright/test";
 
-const INBUCKET_URL = "http://127.0.0.1:54324";
+import { fetchConfirmationLink } from "./helpers/mailpit";
 
-async function fetchConfirmationLink(email: string): Promise<string> {
-  const mailboxRes = await fetch(`${INBUCKET_URL}/api/v1/mailbox/${encodeURIComponent(email)}`);
-  const messages = await mailboxRes.json();
-  const latest = messages.at(-1);
-
-  const messageRes = await fetch(
-    `${INBUCKET_URL}/api/v1/mailbox/${encodeURIComponent(email)}/${latest.id}`,
-  );
-  const message = await messageRes.json();
-
-  const match = /(http:\/\/[^\s"]+\/auth\/confirm\?[^\s"]+)/.exec(message.body.text);
-  if (!match) throw new Error("No /auth/confirm link found in the confirmation email");
-  return match[1];
-}
-
-// Registers, retrieves the real confirmation email from local Inbucket, and follows the link —
+// Registers, retrieves the real confirmation email from local Mailpit, and follows the link —
 // proving the full register -> verify round trip, not just the two halves in isolation.
 // Expected to hit the same playwright-in-Docker ERR_SSL_PROTOCOL_ERROR blocker noted for
 // e2e/register.spec.ts (PROGRESS.md, Day 2) until that infra issue is resolved.

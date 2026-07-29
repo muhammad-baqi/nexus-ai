@@ -5,7 +5,7 @@
 > and release cadence are `docs/00_Project/Roadmap.md`.
 > `[ ]` = not started · `[~]` = in progress · `[x]` = done & committed.
 
-Last updated: 2026-07-29 — Day 2: Register and Email verification shipped (2/16). Vercel is
+Last updated: 2026-07-29 — Day 2: Register, Email verification, and Login shipped (3/16). Vercel is
 connected (one project tracking `main`; a second project tracking `staging` is still
 outstanding, see infra note below). `develop`/`staging`/`main` were promoted early as a
 connection test — `nexus-prod` Supabase schema push is still outstanding too.
@@ -54,7 +54,7 @@ connection test — `nexus-prod` Supabase schema push is still outstanding too.
   issue, not real network unreachability) — blocks running `e2e/*.spec.ts` via
   `docker compose --profile test run playwright` until resolved.
 
-## Day 2 — Core Platform (v0.1) — release Tuesday (2/16)
+## Day 2 — Core Platform (v0.1) — release Tuesday (3/16)
 
 - [x] Register (email + password) — `app/register`, `components/auth/register-form.tsx`; no
   custom API route (Supabase Auth client SDK direct from the frontend, per API_Design.md).
@@ -90,7 +90,23 @@ connection test — `nexus-prod` Supabase schema push is still outstanding too.
   fixed: the redirect origin was being built from the request's Host header (now prefers
   `NEXT_PUBLIC_APP_URL`), and the auto-login behavior above was an unflagged side effect (now
   documented and the UI copy matches it).
-- [ ] Login
+- [x] Login — `app/login`, `components/auth/login-form.tsx`; `supabase.auth.signInWithPassword()`
+  direct from the client, same pattern as Register. Three-way error handling confirmed live
+  against real Supabase error codes: `invalid_credentials` (Supabase returns this same code for
+  both wrong password and an unknown email, so no-enumeration is free) shows one generic
+  "Invalid email or password"; `email_not_confirmed` swaps to a "verify your email first" state
+  with a resend option; anything else shows a generic retry-able error. Success redirects to `/`
+  — there's no Dashboard yet (later Day 2 item). Extracted `ResendVerificationButton` out of
+  `RegisterForm` into a shared component since Login's unverified state needed identical
+  resend/cooldown behavior. Repeated-failed-login rate limiting relies on Supabase's
+  already-configured IP-based `sign_in_sign_ups` limit rather than a new per-account
+  attempt-counter table — a deliberate scope decision, not a silent gap. 33/33 unit tests green,
+  typecheck clean. Verified live: register → real Mailpit confirmation link → login tested with
+  correct password, wrong password, unknown email, and an unverified account, all matching the
+  UI states above. Self-review caught a real bug in the new `e2e/helpers/mailpit.ts` shared
+  helper (picked the oldest message for an address instead of the newest) — fixed and reverified
+  live with two messages on one address. `e2e/login.spec.ts` written but not yet green, same
+  known `playwright`-in-Docker blocker as the other two e2e specs.
 - [ ] Logout
 - [ ] Password reset (request + set new password)
 - [ ] Change password (logged in)

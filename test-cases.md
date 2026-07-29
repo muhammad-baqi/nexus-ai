@@ -61,3 +61,13 @@ leave them as a style reference; either is fine.)*
 - [x] A mocked generic resend failure shows a retry-able error message, keeps the check-your-email screen visible, and does not start a cooldown
 - [x] A mocked "already confirmed" resend error shows the same generic message as any other failure — doesn't reveal account state
 - [ ] (Playwright `@smoke`) Registering, fetching the confirmation email from local Inbucket, and following the link lands on `/verify-email?status=success` — test written (`e2e/verify-email.spec.ts`), not yet green: same known `playwright`-in-Docker `ERR_SSL_PROTOCOL_ERROR` blocker as `register.spec.ts`. The real round trip (register → local Mailpit/Inbucket email → custom `/auth/confirm` link → session cookie set → `/verify-email?status=success`) was proven live via direct HTTP requests against the running dev server and local Supabase instead — the Chrome extension wasn't connected this session so a visual browser walkthrough wasn't possible; also confirmed the two error paths (`?status=invalid` for missing/malformed params, `?status=expired` for a bogus/rejected token) and the real `over_email_send_rate_limit` resend response, all matching what the mocked unit tests assert.
+
+## Login (Day 2)
+- [x] Submitting with an empty email and/or password shows inline "required" errors, no `signInWithPassword` call
+- [x] Submitting an invalid email format shows an inline error, no call
+- [x] A mocked `invalid_credentials` error shows "Invalid email or password" inline and stays on the login form (not swapped to a different screen)
+- [x] A mocked `email_not_confirmed` error swaps to the "please verify your email" state and renders a working resend control
+- [x] A successful `signInWithPassword` call redirects to `/`
+- [x] A mocked network/server error shows a retry-able message, distinct from the invalid-credentials copy
+- [x] The submit button is never left stuck disabled after an error
+- [ ] (Playwright `@smoke`) Register, verify via the real Mailpit link, then log in — lands on `/` with a session cookie set — test written (`e2e/login.spec.ts`), expected to hit the same known `playwright`-in-Docker blocker as the other two e2e specs; verified live instead via direct HTTP requests per PROGRESS.md's established approach.

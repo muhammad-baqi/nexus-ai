@@ -1,26 +1,17 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useState, type FormEvent } from "react";
 
 import { createClient } from "@/lib/supabase/client";
 import { registerSchema } from "@/lib/validation/auth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { ResendVerificationButton } from "@/components/auth/resend-verification-button";
 
 type FieldErrors = Partial<Record<"email" | "password" | "confirmPassword", string>>;
 
 const FIELD_KEYS = ["email", "password", "confirmPassword"] as const;
-
-// docs/01_MVP/Authentication.md: verification-email requests are rate-limited to
-// no more than one per 60 seconds per email.
-const RESEND_COOLDOWN_SECONDS = 60;
-
-// GoTrue's code when max_frequency is hit — shown distinctly from a generic failure
-// since it's an expected, not-broken outcome (see Authentication.md's Error States).
-const RESEND_RATE_LIMIT_ERROR_CODE = "over_email_send_rate_limit";
-
-type ResendStatus = "idle" | "sending" | "error" | "rate-limited";
 
 // With email confirmation enabled (required by docs/01_MVP/Authentication.md),
 // Supabase Auth already returns { error: null } + an obfuscated user object
@@ -38,37 +29,6 @@ export function RegisterForm() {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [status, setStatus] = useState<"idle" | "submitting" | "submitted" | "error">("idle");
-  const [resendStatus, setResendStatus] = useState<ResendStatus>("idle");
-  const [cooldownSeconds, setCooldownSeconds] = useState(0);
-
-  useEffect(() => {
-    if (cooldownSeconds <= 0) return;
-    const timer = setInterval(() => {
-      setCooldownSeconds((seconds) => Math.max(0, seconds - 1));
-    }, 1000);
-    return () => clearInterval(timer);
-  }, [cooldownSeconds]);
-
-  async function handleResend() {
-    setResendStatus("sending");
-
-    const supabase = createClient();
-    const { error } = await supabase.auth.resend({ type: "signup", email });
-
-    if (error) {
-      console.error("[register] resend failed:", error);
-      const isRateLimited = error.code === RESEND_RATE_LIMIT_ERROR_CODE;
-      setResendStatus(isRateLimited ? "rate-limited" : "error");
-      // Rate-limited means Supabase is already refusing to send — hold the button so the
-      // user doesn't immediately retry into the same wall. A genuine failure didn't consume
-      // anything, so let them retry right away.
-      if (isRateLimited) setCooldownSeconds(RESEND_COOLDOWN_SECONDS);
-      return;
-    }
-
-    setResendStatus("idle");
-    setCooldownSeconds(RESEND_COOLDOWN_SECONDS);
-  }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -113,14 +73,6 @@ export function RegisterForm() {
   }
 
   if (status === "submitted") {
-    const resendDisabled = resendStatus === "sending" || cooldownSeconds > 0;
-    const resendLabel =
-      resendStatus === "sending"
-        ? "Sending..."
-        : cooldownSeconds > 0
-          ? `Resend email (${cooldownSeconds}s)`
-          : "Resend email";
-
     return (
       <div className="flex flex-col gap-2" role="status">
         <h1 className="text-xl font-semibold">Check your email</h1>
@@ -129,25 +81,7 @@ export function RegisterForm() {
           you&apos;ll be signed in automatically.
         </p>
 
-        {resendStatus === "rate-limited" && (
-          <p className="text-muted-foreground text-sm" role="alert">
-            You&apos;ve requested this recently — please wait a bit before trying again.
-          </p>
-        )}
-        {resendStatus === "error" && (
-          <p className="text-destructive text-sm" role="alert">
-            Couldn&apos;t resend the email. Please try again.
-          </p>
-        )}
-
-        <Button
-          type="button"
-          variant="outline"
-          disabled={resendDisabled}
-          onClick={handleResend}
-        >
-          {resendLabel}
-        </Button>
+        <ResendVerificationButton email={email} />
       </div>
     );
   }
