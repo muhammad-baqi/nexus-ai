@@ -1,12 +1,13 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { RegisterForm } from "./register-form";
 
 const signUp = vi.fn();
+const resend = vi.fn();
 
 vi.mock("@/lib/supabase/client", () => ({
-  createClient: () => ({ auth: { signUp } }),
+  createClient: () => ({ auth: { signUp, resend } }),
 }));
 
 async function fillForm(
@@ -22,9 +23,21 @@ async function fillForm(
   fireEvent.click(screen.getByRole("button", { name: /create account/i }));
 }
 
+async function submitAndReachCheckYourEmail(email: string = "new-user@example.com") {
+  signUp.mockResolvedValue({ data: {}, error: null });
+  render(<RegisterForm />);
+  await fillForm(email, "abcd1234");
+  await screen.findByText(/check your email/i);
+}
+
 describe("RegisterForm", () => {
   beforeEach(() => {
     signUp.mockReset();
+    resend.mockReset();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it("shows password requirements before any submit attempt", () => {
@@ -99,5 +112,73 @@ describe("RegisterForm", () => {
     await waitFor(() =>
       expect(screen.getByRole("button", { name: /create account/i })).toBeEnabled(),
     );
+  });
+
+  it("calls resend with type signup and the registered email", async () => {
+    resend.mockResolvedValue({ data: {}, error: null });
+    await submitAndReachCheckYourEmail("resend-me@example.com");
+
+    fireEvent.click(screen.getByRole("button", { name: /resend email/i }));
+
+    await waitFor(() =>
+      expect(resend).toHaveBeenCalledWith({ type: "signup", email: "resend-me@example.com" }),
+    );
+  });
+
+  it("disables the resend button with a cooldown after a successful send, and a second click does not resend again", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    resend.mockResolvedValue({ data: {}, error: null });
+    await submitAndReachCheckYourEmail();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /resend email/i }));
+    });
+
+    expect(resend).toHaveBeenCalledTimes(1);
+    const cooldownButton = screen.getByRole("button", { name: /resend email \(\d+s\)/i });
+    expect(cooldownButton).toBeDisabled();
+
+    fireEvent.click(cooldownButton);
+    expect(resend).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows a 'please wait' message and starts a cooldown on a rate-limited resend", async () => {
+    resend.mockResolvedValue({
+      data: {},
+      error: { message: "Too many requests", code: "over_email_send_rate_limit" },
+    });
+    await submitAndReachCheckYourEmail();
+
+    fireEvent.click(screen.getByRole("button", { name: /resend email/i }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/wait a bit/i);
+    expect(screen.getByRole("button", { name: /resend email \(\d+s\)/i })).toBeDisabled();
+  });
+
+  it("shows a retry-able error and keeps the check-your-email screen on a generic resend failure, without starting a cooldown", async () => {
+    resend.mockResolvedValue({
+      data: {},
+      error: { message: "Network request failed", code: "unexpected_failure" },
+    });
+    await submitAndReachCheckYourEmail();
+
+    fireEvent.click(screen.getByRole("button", { name: /resend email/i }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/couldn't resend/i);
+    expect(screen.getByText(/check your email/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^resend email$/i })).toBeEnabled();
+  });
+
+  it("shows the same generic error for an already-confirmed account as any other resend failure — no account-state enumeration", async () => {
+    resend.mockResolvedValue({
+      data: {},
+      error: { message: "Email already confirmed", code: "email_already_confirmed" },
+    });
+    await submitAndReachCheckYourEmail();
+
+    fireEvent.click(screen.getByRole("button", { name: /resend email/i }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/couldn't resend/i);
+    expect(screen.queryByText(/already confirmed/i)).not.toBeInTheDocument();
   });
 });

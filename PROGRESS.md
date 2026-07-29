@@ -5,7 +5,7 @@
 > and release cadence are `docs/00_Project/Roadmap.md`.
 > `[ ]` = not started · `[~]` = in progress · `[x]` = done & committed.
 
-Last updated: 2026-07-29 — Day 2 started: Register (email + password) shipped. Vercel is
+Last updated: 2026-07-29 — Day 2: Register and Email verification shipped (2/16). Vercel is
 connected (one project tracking `main`; a second project tracking `staging` is still
 outstanding, see infra note below). `develop`/`staging`/`main` were promoted early as a
 connection test — `nexus-prod` Supabase schema push is still outstanding too.
@@ -54,7 +54,7 @@ connection test — `nexus-prod` Supabase schema push is still outstanding too.
   issue, not real network unreachability) — blocks running `e2e/*.spec.ts` via
   `docker compose --profile test run playwright` until resolved.
 
-## Day 2 — Core Platform (v0.1) — release Tuesday (1/16)
+## Day 2 — Core Platform (v0.1) — release Tuesday (2/16)
 
 - [x] Register (email + password) — `app/register`, `components/auth/register-form.tsx`; no
   custom API route (Supabase Auth client SDK direct from the frontend, per API_Design.md).
@@ -69,8 +69,27 @@ connection test — `nexus-prod` Supabase schema push is still outstanding too.
   Vitest missing Testing Library's `afterEach(cleanup)`; the `playwright` Docker service never
   had browsers installed; local Supabase had `enable_confirmations = false`, contradicting the
   spec and this project's own test instructions.
-- [ ] Email verification
-- [ ] Email verification
+- [x] Email verification — custom Supabase confirmation email template links to our own
+  `app/auth/confirm` route (`token_hash` + `type=email` params, not Supabase's default
+  `/auth/v1/verify`, whose tokens land in an unusable URL fragment); the route validates the
+  query with zod, calls `supabase.auth.verifyOtp()` server-side, and redirects to
+  `/verify-email?status=success|expired|invalid`. Clicking the link signs the user in directly
+  (verifyOtp establishes a session) — there's no separate manual-login step for this path, and
+  register-form/verify-email copy says so explicitly. Added a rate-limited "Resend email" action
+  to the register form's check-your-email screen (60s client-side cooldown, distinct messaging
+  for Supabase's real `over_email_send_rate_limit` response vs. a generic failure, and a test
+  locking in that an already-confirmed account gets the same generic message — no enumeration).
+  26/26 unit/integration tests green, typecheck clean. Verified live against the real local
+  Supabase stack via direct HTTP requests (register → real confirmation email → real
+  `/auth/confirm` redirect with a session cookie set → `/verify-email?status=success`; also the
+  `expired`/`invalid` paths and the real rate-limit response) — the Chrome extension wasn't
+  connected this session, so this wasn't a visual browser walkthrough like Register's, but it did
+  exercise the exact same server code paths end-to-end. `e2e/verify-email.spec.ts` is written but
+  not yet green, blocked by the same `playwright`-in-Docker `ERR_SSL_PROTOCOL_ERROR` noted below
+  for `register.spec.ts`. Self-review (code-reviewer subagent) caught two real issues, both
+  fixed: the redirect origin was being built from the request's Host header (now prefers
+  `NEXT_PUBLIC_APP_URL`), and the auto-login behavior above was an unflagged side effect (now
+  documented and the UI copy matches it).
 - [ ] Login
 - [ ] Logout
 - [ ] Password reset (request + set new password)

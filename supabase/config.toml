@@ -252,6 +252,13 @@ otp_expiry = 3600
 # subject = "You have been invited"
 # content_path = "./supabase/templates/invite.html"
 
+# Points the "Confirm signup" link at our own /auth/confirm route (token_hash + type params)
+# instead of Supabase's default /auth/v1/verify redirect, whose tokens land in a URL fragment
+# that a server-side Route Handler can't read. See docs/01_MVP/Authentication.md.
+[auth.email.template.confirmation]
+subject = "Confirm your email"
+content_path = "./supabase/templates/confirmation.html"
+
 # Uncomment to customize notification email template
 # [auth.email.notification.password_changed]
 # enabled = true

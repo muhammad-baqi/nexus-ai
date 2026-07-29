@@ -18,3 +18,10 @@ export const registerSchema = z
   });
 
 export type RegisterInput = z.infer<typeof registerSchema>;
+
+export const verifyEmailQuerySchema = z.object({
+  token_hash: z.string().min(1),
+  type: z.literal("email"),
+});
+
+export type VerifyEmailQuery = z.infer<typeof verifyEmailQuerySchema>;
