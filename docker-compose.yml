@@ -37,7 +37,15 @@ services:
     depends_on:
       - app
     environment:
-      - BASE_URL=http://app:3000
+      # Reaches the app service via its published host port, not the compose network's "app"
+      # service-name DNS — Chromium hardcodes HSTS (forced-HTTPS) for the real .app gTLD, which
+      # collides with a bare hostname literally named "app" and broke http://app:3000 navigation
+      # with net::ERR_SSL_PROTOCOL_ERROR. A same-network "web" alias avoided that collision but
+      # was intermittently unreachable (a Docker Desktop bridge-network-alias quirk); routing
+      # through host.docker.internal instead — the same mechanism already reliably used to reach
+      # local Supabase — sidesteps both problems.
+      - BASE_URL=http://host.docker.internal:3000
+      - MAILPIT_URL=http://host.docker.internal:54324
     entrypoint: ["npx", "playwright", "test"]
     profiles: ["test"]   # run with: docker compose --profile test run playwright
 

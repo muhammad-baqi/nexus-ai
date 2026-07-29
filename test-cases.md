@@ -45,7 +45,7 @@ leave them as a style reference; either is fine.)*
 - [x] A mocked network/server error shows a retry-able error message, not a silent failure
 - [x] Password requirement hints are visible before any submit attempt
 - [x] The submit button is never left stuck disabled after an error
-- [ ] (Playwright `@smoke`) Filling the register form with valid unique data and submitting lands on the check-your-email screen — test written (`e2e/register.spec.ts`), but not yet green: blocked by a Chromium `ERR_SSL_PROTOCOL_ERROR` navigating to a plain-http URL inside the `playwright` container (curl to the same URL from that container works fine, so it's a browser-launch/flag issue, not real network unreachability). Unrelated to this feature's own logic — see PROGRESS.md's Day 2 note.
+- [x] (Playwright `@smoke`) Filling the register form with valid unique data and submitting lands on the check-your-email screen — green, running the real Chromium browser (`e2e/register.spec.ts`), after fixing the `playwright`-in-Docker infra blocker (see PROGRESS.md's `chore/e2e-playwright-docker-fixes` note).
 
 ## Email verification (Day 2)
 - [x] Visiting `/auth/confirm` with a valid `token_hash` + `type=email` calls `verifyOtp` and redirects to `/verify-email?status=success`
@@ -60,7 +60,7 @@ leave them as a style reference; either is fine.)*
 - [x] A mocked `over_email_send_rate_limit` resend response shows a "please wait" message (not the generic error) and still starts the cooldown
 - [x] A mocked generic resend failure shows a retry-able error message, keeps the check-your-email screen visible, and does not start a cooldown
 - [x] A mocked "already confirmed" resend error shows the same generic message as any other failure — doesn't reveal account state
-- [ ] (Playwright `@smoke`) Registering, fetching the confirmation email from local Inbucket, and following the link lands on `/verify-email?status=success` — test written (`e2e/verify-email.spec.ts`), not yet green: same known `playwright`-in-Docker `ERR_SSL_PROTOCOL_ERROR` blocker as `register.spec.ts`. The real round trip (register → local Mailpit/Inbucket email → custom `/auth/confirm` link → session cookie set → `/verify-email?status=success`) was proven live via direct HTTP requests against the running dev server and local Supabase instead — the Chrome extension wasn't connected this session so a visual browser walkthrough wasn't possible; also confirmed the two error paths (`?status=invalid` for missing/malformed params, `?status=expired` for a bogus/rejected token) and the real `over_email_send_rate_limit` resend response, all matching what the mocked unit tests assert.
+- [x] (Playwright `@smoke`) Registering, fetching the confirmation email from local Mailpit, and following the link lands on `/verify-email?status=success` — green, running the real Chromium browser (`e2e/verify-email.spec.ts`).
 
 ## Login (Day 2)
 - [x] Submitting with an empty email and/or password shows inline "required" errors, no `signInWithPassword` call
@@ -70,7 +70,7 @@ leave them as a style reference; either is fine.)*
 - [x] A successful `signInWithPassword` call redirects to `/`
 - [x] A mocked network/server error shows a retry-able message, distinct from the invalid-credentials copy
 - [x] The submit button is never left stuck disabled after an error
-- [ ] (Playwright `@smoke`) Register, verify via the real Mailpit link, then log in — lands on `/` with a session cookie set — test written (`e2e/login.spec.ts`), expected to hit the same known `playwright`-in-Docker blocker as the other two e2e specs; verified live instead via direct HTTP requests per PROGRESS.md's established approach.
+- [x] (Playwright `@smoke`) Register, verify via the real Mailpit link, then log in — lands on `/` with a session cookie set — green, running the real Chromium browser (`e2e/login.spec.ts`).
 
 ## Logout (Day 2)
 - [x] Clicking "Log out" calls `supabase.auth.signOut()`
@@ -79,4 +79,4 @@ leave them as a style reference; either is fine.)*
 - [x] The logout button is never left stuck disabled after an error
 - [x] The landing page renders "Signed in as {email}" and a working Logout button when `getUser()` returns a user
 - [x] The landing page renders Log in/Register links and no Logout button when `getUser()` returns no user
-- [ ] (Playwright `@smoke`) Register, verify via the real Mailpit link (already signed in), confirm `/` shows the signed-in state, log out, confirm no session cookie remains — test written (`e2e/logout.spec.ts`), expected to hit the same known `playwright`-in-Docker blocker as the other three e2e specs; verified live instead via direct HTTP + cookie checks.
+- [x] (Playwright `@smoke`) Register, verify via the real Mailpit link (already signed in), confirm `/` shows the signed-in state, log out, confirm no session cookie remains — green, running the real Chromium browser (`e2e/logout.spec.ts`).

@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const verifyOtp = vi.fn();
 
@@ -16,6 +16,10 @@ function requestFor(query: string) {
 describe("GET /auth/confirm", () => {
   beforeEach(() => {
     verifyOtp.mockReset();
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
   it("calls verifyOtp and redirects to status=success on a valid token_hash + type=email", async () => {
@@ -66,6 +70,33 @@ describe("GET /auth/confirm", () => {
 
     expect(response.headers.get("location")).toBe(
       "http://localhost:3000/verify-email?status=invalid",
+    );
+  });
+
+  it("ignores the request's Host header on Vercel and uses NEXT_PUBLIC_APP_URL instead", async () => {
+    vi.stubEnv("VERCEL", "1");
+    vi.stubEnv("NEXT_PUBLIC_APP_URL", "https://nexus.example.com");
+    verifyOtp.mockResolvedValue({ error: null });
+
+    const response = await GET(
+      new NextRequest("http://attacker.example.com/auth/confirm?token_hash=abc123&type=email"),
+    );
+
+    expect(response.headers.get("location")).toBe(
+      "https://nexus.example.com/verify-email?status=success",
+    );
+  });
+
+  it("uses the request's own origin when not deployed (no VERCEL/production signal)", async () => {
+    vi.stubEnv("VERCEL", "");
+    vi.stubEnv("NODE_ENV", "test");
+    vi.stubEnv("NEXT_PUBLIC_APP_URL", "https://nexus.example.com");
+    verifyOtp.mockResolvedValue({ error: null });
+
+    const response = await GET(requestFor("?token_hash=abc123&type=email"));
+
+    expect(response.headers.get("location")).toBe(
+      "http://localhost:3000/verify-email?status=success",
     );
   });
 });

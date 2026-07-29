@@ -43,17 +43,51 @@ connection test — `nexus-prod` Supabase schema push is still outstanding too.
 **Day 1 status: done.** Vercel is connected and deploying on push.
 
 **Outstanding infra (not blocking Day 2 feature work, revisit before relying on them):**
-- Second Vercel project tracking `staging` (currently only one project, tracking `main`);
-  `nexus-prod` Supabase schema push.
+- Second Vercel project tracking `staging` (currently only one project, tracking `main`) — still
+  needs to be created via the Vercel dashboard/CLI (no `vercel` CLI or token available in this
+  environment); `nexus-prod`'s Supabase schema is now pushed (below), so once this project
+  exists both prod-side pieces are done.
 - Local dev: the browser can't reach `NEXT_PUBLIC_SUPABASE_URL=http://host.docker.internal:54321`
   (only resolvable from inside the app's Docker container, not from a host browser) — blocks
   driving a real signed-in flow against local Supabase from a host browser. Needs either a
   `127.0.0.1 host.docker.internal` hosts-file entry (requires admin rights) or splitting the
   client- and server-side Supabase URL env vars.
-- The `playwright` Docker service hits `ERR_SSL_PROTOCOL_ERROR` launching Chromium against a
-  plain-http URL inside its container (curl to the same URL works fine, so it's a browser-launch
-  issue, not real network unreachability) — blocks running `e2e/*.spec.ts` via
-  `docker compose --profile test run playwright` until resolved.
+
+**Resolved 2026-07-29 (`chore/e2e-playwright-docker-fixes`):** `e2e/*.spec.ts` now runs green via
+a real Chromium browser in `docker compose --profile test run playwright` — previously blocked
+end-to-end, several compounding root causes, each confirmed live rather than guessed:
+1. `ERR_SSL_PROTOCOL_ERROR` on every navigation: the Docker service was named `app`, and Chromium
+   hardcodes HSTS (forced-HTTPS) for the real `.app` gTLD, which matches a bare hostname literally
+   named "app". Routing the playwright service through `host.docker.internal:3000` (published
+   port) instead of a same-network service-name/alias avoided the collision.
+2. `net::ERR_CONNECTION_REFUSED` mid-test, from Mailpit: `e2e/helpers/mailpit.ts` defaulted to
+   `127.0.0.1:54324`, correct for a host-run Playwright but self-referential from inside the
+   playwright container — now configurable via `MAILPIT_URL`, set to `host.docker.internal:54324`
+   for the Docker service.
+3. Hydration silently broken (native form submit instead of React's, blank/uninteractive pages):
+   Next 15+'s dev-server origin protection (DNS-rebinding defense) rejects HMR/RSC requests from
+   hostnames not in `allowedDevOrigins` — added `host.docker.internal` there (`next.config.ts`).
+4. `/auth/confirm`'s redirect `Location` always uses `NEXT_PUBLIC_APP_URL`
+   (`http://localhost:3000`) — confirmed live that Next's dev server doesn't vary this per the
+   request's actual Host, so pinning to that env var (added during Email verification's
+   self-review, for production's sake) broke the same server being reached multiple ways at once
+   locally. Now only pinned when `NODE_ENV === "production"`; every origin that can reach the dev
+   server locally is already trusted, unlike a real deployment.
+5. Even after that, the *browser* never re-navigated correctly: Playwright/Chromium doesn't
+   surface a cross-origin *navigation* redirect to `page.route()` interception at all (confirmed
+   live with a catch-all route) — apparently a site-isolation-related gap. `followConfirmationLink`
+   (`e2e/helpers/mailpit.ts`) now hits `/auth/confirm` via the browser context's own request API
+   (shares its cookie jar with `page`) instead of `page.goto()`, reads the `Location` header
+   itself, and navigates to the corrected same-origin path.
+6. Two smaller test bugs surfaced once the above was fixed and specs could actually run for the
+   first time: `getByLabel("Password")` substring-matched both "Password" and "Confirm password"
+   (needed `{ exact: true }`), and the session-cookie regex `/^sb-.*-auth-token/` also matched
+   Supabase's PKCE `-auth-token-code-verifier` cookie (tightened to anchor the end).
+
+Also pushed `nexus-prod`'s Supabase schema (`supabase link --project-ref
+qdhtdqccuycljzvzvyis && supabase db push`, migration `001_initial_schema.sql`) — it existed since
+initial setup but was never linked/pushed. Re-linked back to `nexus-staging` afterward so local
+CLI commands don't default to prod.
 
 ## Day 2 — Core Platform (v0.1) — release Tuesday (4/16)
 
@@ -63,8 +97,9 @@ connection test — `nexus-prod` Supabase schema push is still outstanding too.
   browser via Claude-in-Chrome — form render, validation, and the error state all confirmed
   live; the true happy-path ("check your email") wasn't confirmed against a live backend in a
   real browser due to two local-dev environment gaps (see note below) — it is covered by a
-  mocked component test exercising the same render path, and by `e2e/register.spec.ts`
-  (written, not yet green — same gaps). Also fixed several latent infra bugs this feature was
+  mocked component test exercising the same render path, and by `e2e/register.spec.ts` (written
+  then, later confirmed green — see the Day 1 "Resolved 2026-07-29" note above). Also fixed
+  several latent infra bugs this feature was
   the first to exercise: Docker's Node 20 image vs. deps requiring Node ≥22 (jsdom,
   `@supabase/supabase-js`, `@testing-library/jest-dom`) — bumped to `node:22-bookworm-slim`;
   Vitest missing Testing Library's `afterEach(cleanup)`; the `playwright` Docker service never
@@ -85,9 +120,8 @@ connection test — `nexus-prod` Supabase schema push is still outstanding too.
   `/auth/confirm` redirect with a session cookie set → `/verify-email?status=success`; also the
   `expired`/`invalid` paths and the real rate-limit response) — the Chrome extension wasn't
   connected this session, so this wasn't a visual browser walkthrough like Register's, but it did
-  exercise the exact same server code paths end-to-end. `e2e/verify-email.spec.ts` is written but
-  not yet green, blocked by the same `playwright`-in-Docker `ERR_SSL_PROTOCOL_ERROR` noted below
-  for `register.spec.ts`. Self-review (code-reviewer subagent) caught two real issues, both
+  exercise the exact same server code paths end-to-end. `e2e/verify-email.spec.ts` (written then,
+  later confirmed green — Day 1 note above). Self-review (code-reviewer subagent) caught two real issues, both
   fixed: the redirect origin was being built from the request's Host header (now prefers
   `NEXT_PUBLIC_APP_URL`), and the auto-login behavior above was an unflagged side effect (now
   documented and the UI copy matches it).
@@ -106,8 +140,8 @@ connection test — `nexus-prod` Supabase schema push is still outstanding too.
   correct password, wrong password, unknown email, and an unverified account, all matching the
   UI states above. Self-review caught a real bug in the new `e2e/helpers/mailpit.ts` shared
   helper (picked the oldest message for an address instead of the newest) — fixed and reverified
-  live with two messages on one address. `e2e/login.spec.ts` written but not yet green, same
-  known `playwright`-in-Docker blocker as the other two e2e specs.
+  live with two messages on one address. `e2e/login.spec.ts` (written then, later confirmed
+  green — Day 1 note above).
 - [x] Logout — `components/auth/logout-button.tsx` calls
   `supabase.auth.signOut({ scope: "global" })` (explicit rather than relying on the library
   default), then redirects to `/`. Confirmed live that this genuinely revokes the session
@@ -117,7 +151,7 @@ connection test — `nexus-prod` Supabase schema push is still outstanding too.
   Dashboard yet: signed-in shows "Signed in as {email}" + Logout, signed-out shows Log
   in/Register links. 39/39 unit tests green, typecheck clean. Self-review: clean approve, no
   critical/warning findings; applied the one suggestion (explicit `signOut` scope).
-  `e2e/logout.spec.ts` written but not yet green, same known `playwright`-in-Docker blocker.
+  `e2e/logout.spec.ts` (written then, later confirmed green — Day 1 note above).
 - [ ] Password reset (request + set new password)
 - [ ] Change password (logged in)
 - [ ] Delete account (cascading)

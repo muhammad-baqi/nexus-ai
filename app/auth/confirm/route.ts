@@ -9,11 +9,23 @@ import { verifyEmailQuerySchema } from "@/lib/validation/auth";
 // still redirect to is reached only by our own zod validation, before Supabase is ever called.
 const EXPIRED_TOKEN_ERROR_CODE = "otp_expired";
 
+// This is an unauthenticated route, so an attacker-controlled Host header shouldn't be able to
+// drive a redirect Location — pin to the configured site origin on Vercel (VERCEL is set on
+// every Vercel deployment, preview and production alike) and as a fallback whenever actually
+// built for production, in case this is ever self-hosted outside Vercel. Everywhere else
+// (`next dev`, Vitest), every origin that can reach the server is already trusted, and pinning
+// to NEXT_PUBLIC_APP_URL would break it: confirmed live that Next's dev server doesn't vary
+// request.url's origin by the incoming Host header at all, so local dev is reachable multiple
+// ways at once (localhost, Docker's host.docker.internal) that a single fixed env var can't
+// cover — whichever one NEXT_PUBLIC_APP_URL doesn't name would just break.
+function getRedirectOrigin(requestOrigin: string): string {
+  const isDeployed = process.env.VERCEL === "1" || process.env.NODE_ENV === "production";
+  return isDeployed ? (process.env.NEXT_PUBLIC_APP_URL ?? requestOrigin) : requestOrigin;
+}
+
 export async function GET(request: NextRequest) {
   const { searchParams, origin: requestOrigin } = new URL(request.url);
-  // Prefer the configured site origin over the request's Host header — this is an
-  // unauthenticated route, so an attacker-controlled Host shouldn't drive a redirect Location.
-  const origin = process.env.NEXT_PUBLIC_APP_URL ?? requestOrigin;
+  const origin = getRedirectOrigin(requestOrigin);
 
   const result = verifyEmailQuerySchema.safeParse({
     token_hash: searchParams.get("token_hash"),
