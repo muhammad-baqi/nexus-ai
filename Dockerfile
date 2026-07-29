@@ -1,5 +1,8 @@
 # Debian-based image so local dev (Mac) matches production servers (Ubuntu).
-FROM node:20-bookworm-slim AS base
+# Node 22 (not 20): several deps in package-lock.json (@supabase/supabase-js,
+# jsdom, @testing-library/jest-dom) require Node >=22 — Vercel's Next.js 16
+# runtime is Node 22+ too, so this also keeps the Fluid Compute parity CLAUDE.md asks for.
+FROM node:22-bookworm-slim AS base
 # node:*-bookworm-slim is Debian-based, close enough to Ubuntu for parity on
 # glibc/native-binary behavior. For exact Ubuntu parity instead, swap for:
 # FROM ubuntu:22.04   and install node via apt/nvm manually.
@@ -16,6 +19,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY package*.json ./
 RUN npm ci
+
+# Chromium only — playwright.config.ts only configures the chromium project.
+# --with-deps pulls the OS libs Playwright needs beyond build-essential above.
+RUN npx playwright install --with-deps chromium
 
 COPY . .
 

@@ -34,3 +34,15 @@ Format per feature:
 *(Real feature headings get appended below this line as `/ship-feature` runs, in the order
 built — delete these two worked examples once the first real feature's cases are recorded, or
 leave them as a style reference; either is fine.)*
+
+## Register (Day 2)
+- [x] Password under 8 characters shows an inline error, no Supabase call is made
+- [x] Password with no digit shows an inline error, no Supabase call is made
+- [x] Password with no letter shows an inline error, no Supabase call is made
+- [x] Password/confirmation mismatch shows an inline error, no Supabase call is made
+- [x] Valid unique email/password calls `signUp` and shows the "check your email" screen, not a logged-in state
+- [x] A mocked `user_already_exists` error (the shape Supabase returns locally, where email confirmation is disabled) shows the identical "check your email" screen — no distinguishing signal. With confirmations enabled (staging/prod), Supabase already returns `error: null` for a duplicate, which the plain success case (above) covers.
+- [x] A mocked network/server error shows a retry-able error message, not a silent failure
+- [x] Password requirement hints are visible before any submit attempt
+- [x] The submit button is never left stuck disabled after an error
+- [ ] (Playwright `@smoke`) Filling the register form with valid unique data and submitting lands on the check-your-email screen — test written (`e2e/register.spec.ts`), but not yet green: blocked by a Chromium `ERR_SSL_PROTOCOL_ERROR` navigating to a plain-http URL inside the `playwright` container (curl to the same URL from that container works fine, so it's a browser-launch/flag issue, not real network unreachability). Unrelated to this feature's own logic — see PROGRESS.md's Day 2 note.
