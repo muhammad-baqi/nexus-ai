@@ -5,9 +5,10 @@
 > and release cadence are `docs/00_Project/Roadmap.md`.
 > `[ ]` = not started · `[~]` = in progress · `[x]` = done & committed.
 
-Last updated: 2026-07-30 — Day 2: Register, Email verification, Login, Logout, Password reset,
-Change password, Delete account, Profile management, and Collections (full CRUD/archive/
-favorite/search/stats/trash-restore) shipped (13/16). Vercel is
+Last updated: 2026-07-30 — Day 2 code-complete on `develop`: all 16/16 features shipped
+(Register, Email verification, Login, Logout, Password reset, Change password, Delete account,
+Profile management, Collections, App nav/Dashboard shell, Theming). QA gate still to run before
+promoting to production. Vercel is
 connected (one project tracking `main`; a second project tracking `staging` is still
 outstanding, see infra note below). `develop`/`staging`/`main` were promoted early as a
 connection test — `nexus-prod` Supabase schema push is still outstanding too.
@@ -90,7 +91,7 @@ qdhtdqccuycljzvzvyis && supabase db push`, migration `001_initial_schema.sql`) �
 initial setup but was never linked/pushed. Re-linked back to `nexus-staging` afterward so local
 CLI commands don't default to prod.
 
-## Day 2 — Core Platform (v0.1) — release Tuesday (13/16)
+## Day 2 — Core Platform (v0.1) — release Tuesday (16/16)
 
 - [x] Register (email + password) — `app/register`, `components/auth/register-form.tsx`; no
   custom API route (Supabase Auth client SDK direct from the frontend, per API_Design.md).
@@ -229,9 +230,27 @@ CLI commands don't default to prod.
   Turbopack dev-server staleness issue this session (routes silently 404s until a full
   `docker compose down` + cache-volume removal) — environment quirk, not an app bug; noted here
   in case it recurs in Day 3.
-- [ ] App navigation + Dashboard shell (layout only — widgets land Day 4)
-- [ ] Theming — light / dark / system, persisted per-account
-- [ ] **v0.1 released to production** ✅
+- [x] App navigation + Dashboard shell (layout only — widgets land Day 4) — `components/layout/app-nav.tsx`
+  (Dashboard/Collections/Settings/Logout) rendered from `app/(app)/layout.tsx`; `/dashboard`
+  shows the six section placeholders from `Dashboard.md` as friendly empty states (real data
+  needs Notes/Search, Day 3/4). Landing page (`app/page.tsx`) now redirects signed-in visitors
+  to `/dashboard` instead of the old ad hoc "Signed in as {email}" block.
+- [x] Theming — light / dark / system, persisted per-account — hand-rolled (no new dependency):
+  a `theme` cookie read server-side in the root layout avoids a flash for the common case, a
+  static inline pre-paint script (`components/theme/theme-script.tsx`) covers first-load/
+  no-cookie/system, and `profiles.theme_preference` is the actual cross-device source of truth
+  — `ThemeSync` reconciles it into the local cookie on every authenticated page load. No live
+  OS-preference-change listener while a tab stays open — a deliberate Day 2 scope cut, not
+  required by `Settings.md`'s acceptance criteria (only explicit-selection immediacy is).
+  192/192 unit/integration tests green, typecheck clean. Self-review (code-reviewer subagent)
+  caught a real bug: the layout silently swallowed the profile-fetch error and defaulted to
+  "system," which `ThemeSync` would then treat as authoritative and use to overwrite a user's
+  actual theme on any transient DB error — fixed to log and skip the sync instead of guessing.
+  Also fixed an unhandled-rejection gap in the toggle's own save.
+- [x] **v0.1 code-complete on `develop` — 16/16 Day 2 features shipped.** Promoting
+  `develop → staging → main` (tag `v0.1`) is the human's action, not the agent's — see
+  `.claude/docs/git-workflow.md`. Day 2 QA gate (`.claude/docs/qa-checklist.md`) still to run
+  before that promotion.
 
 ## Day 3 — Knowledge Management — release Wednesday (staging only) (0/11)
 
