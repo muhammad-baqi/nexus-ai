@@ -6,7 +6,8 @@
 > `[ ]` = not started · `[~]` = in progress · `[x]` = done & committed.
 
 Last updated: 2026-07-30 — Day 2: Register, Email verification, Login, Logout, Password reset,
-Change password, Delete account, and Profile management shipped (8/16). Vercel is
+Change password, Delete account, Profile management, and Collections (full CRUD/archive/
+favorite/search/stats/trash-restore) shipped (13/16). Vercel is
 connected (one project tracking `main`; a second project tracking `staging` is still
 outstanding, see infra note below). `develop`/`staging`/`main` were promoted early as a
 connection test — `nexus-prod` Supabase schema push is still outstanding too.
@@ -89,7 +90,7 @@ qdhtdqccuycljzvzvyis && supabase db push`, migration `001_initial_schema.sql`) �
 initial setup but was never linked/pushed. Re-linked back to `nexus-staging` afterward so local
 CLI commands don't default to prod.
 
-## Day 2 — Core Platform (v0.1) — release Tuesday (8/16)
+## Day 2 — Core Platform (v0.1) — release Tuesday (13/16)
 
 - [x] Register (email + password) — `app/register`, `components/auth/register-form.tsx`; no
   custom API route (Supabase Auth client SDK direct from the frontend, per API_Design.md).
@@ -205,12 +206,29 @@ CLI commands don't default to prod.
   caught two real issues, both fixed: the settings page silently swallowed the profile-fetch/
   sign errors instead of logging them (CLAUDE.md rule #4), and the initials fallback read the
   stale initial-render name instead of the live just-saved one.
-- [ ] Default "Inbox" collection provisioned on signup
-- [ ] Collections — create, rename, edit (description/color/icon)
-- [ ] Collections — delete (→ Trash, with affected-item-count confirmation)
-- [ ] Collections — archive / unarchive
-- [ ] Collections — favorite / unfavorite
-- [ ] Collections — search by name, statistics (item count by type, last updated)
+- [x] Default "Inbox" collection provisioned on signup — verified live (already worked via the
+  Day 1 `handle_new_user` trigger; Collections work just confirmed it end-to-end).
+- [x] Collections — create, rename, edit (description/color/icon) — `/collections`,
+  `app/api/collections/*` (zod-validated, case-insensitive duplicate-name → inline 409).
+- [x] Collections — delete (→ Trash, with affected-item-count confirmation) — real stats-backed
+  count shown before deleting; a Trash view + Restore action also shipped (needed for this
+  feature's own create→delete→restore acceptance criterion). Cascades to `knowledge_items`
+  (no items exist until Day 3, but correct today regardless of row count).
+- [x] Collections — archive / unarchive
+- [x] Collections — favorite / unfavorite (favorites sort first)
+- [x] Collections — search by name (client-side), statistics (item count by type, last updated,
+  computed on read per Collections.md)
+
+  All of the above: 175/175 unit/integration tests green, typecheck clean, `e2e/collections.spec.ts`
+  (@smoke) covers create → duplicate-name rejection → delete → restore live against Mailpit +
+  local Supabase. RLS verified directly against PostgREST with a second real account (cross-user
+  read/write both return empty/0-rows). Self-review (code-reviewer subagent) caught real gaps,
+  all fixed: the missing restore UI/e2e coverage above, a stale-zero bug where a failed stats
+  fetch could understate the delete confirmation's item count, and missing UUID validation on
+  path params (shared into a new `lib/supabase/require-user.ts` helper). Also hit a recurring
+  Turbopack dev-server staleness issue this session (routes silently 404s until a full
+  `docker compose down` + cache-volume removal) — environment quirk, not an app bug; noted here
+  in case it recurs in Day 3.
 - [ ] App navigation + Dashboard shell (layout only — widgets land Day 4)
 - [ ] Theming — light / dark / system, persisted per-account
 - [ ] **v0.1 released to production** ✅
