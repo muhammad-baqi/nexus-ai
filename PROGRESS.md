@@ -6,7 +6,7 @@
 > `[ ]` = not started · `[~]` = in progress · `[x]` = done & committed.
 
 Last updated: 2026-07-30 — Day 2: Register, Email verification, Login, Logout, Password reset,
-Change password, and Delete account shipped (7/16). Vercel is
+Change password, Delete account, and Profile management shipped (8/16). Vercel is
 connected (one project tracking `main`; a second project tracking `staging` is still
 outstanding, see infra note below). `develop`/`staging`/`main` were promoted early as a
 connection test — `nexus-prod` Supabase schema push is still outstanding too.
@@ -89,7 +89,7 @@ qdhtdqccuycljzvzvyis && supabase db push`, migration `001_initial_schema.sql`) �
 initial setup but was never linked/pushed. Re-linked back to `nexus-staging` afterward so local
 CLI commands don't default to prod.
 
-## Day 2 — Core Platform (v0.1) — release Tuesday (7/16)
+## Day 2 — Core Platform (v0.1) — release Tuesday (8/16)
 
 - [x] Register (email + password) — `app/register`, `components/auth/register-form.tsx`; no
   custom API route (Supabase Auth client SDK direct from the frontend, per API_Design.md).
@@ -178,7 +178,33 @@ CLI commands don't default to prod.
   clean. Self-review (code-reviewer subagent) caught a real issue — avatar Storage cleanup
   silently swallowed a resolved `{error}` response instead of just a thrown exception — fixed and
   covered by a new test.
-- [ ] Profile management — display name, avatar (basic)
+- [x] Profile management — display name, avatar (basic) — `components/settings/profile-form.tsx`
+  on `/settings`; new `GET`/`PATCH /api/settings` route (zod-validated), and a private `avatars`
+  Storage bucket (`supabase/migrations/002_avatars_storage.sql`) with RLS scoped to a
+  `{owner_id}/avatar` path — avatars are always served via a short-lived signed URL, never a
+  public one. Avatar uploads go directly from the browser to Storage (RLS-protected by the
+  caller's own session), then the resulting path is PATCHed onto `profiles.avatar_url` (which,
+  despite its name, stores a Storage path, not a URL — noted in `Database_Schema.md`). Initials
+  fallback (e.g. "AD" for "Ada Lovelace", or from email if no name is set) when no avatar is set.
+  Also fixed a latent Day 1 bug this feature was the first to expose: `public.profiles` (and
+  every other table from migration 001) was missing real `SELECT`/`INSERT`/`UPDATE` grants for
+  the `anon`/`authenticated` roles underneath its RLS policies — migrations run as `postgres`,
+  whose default-privilege entry for `public` only ever granted `DELETE`/`REFERENCES`/`TRIGGER`/
+  `MAINTAIN`. Every prior Day 2 feature only ever touched `auth.users` (via Supabase Auth) or
+  wrote through the `security definer` `handle_new_user` trigger, so this never surfaced until
+  Profile management became the first feature to read/write a table directly through the
+  session's `authenticated` role. Fixed via a new migration (`003_grant_table_privileges.sql`)
+  granting the standard Supabase default going forward — this would otherwise have silently
+  blocked Collections, Notes, and everything else built on direct table access. 107/107
+  unit/integration tests green, typecheck clean. Verified live against the real local Supabase
+  stack: display name save round-trips through a real page reload and is confirmed directly in
+  Postgres; the Storage RLS boundary was proven directly against the Storage API with a real
+  session token (own-folder upload → 200, another user's folder → 403 RLS denial); the full
+  read path (DB path → server-generated signed URL → `<img>`) renders a real uploaded image.
+  Both new migrations were also pushed to `nexus-staging`. Self-review (code-reviewer subagent)
+  caught two real issues, both fixed: the settings page silently swallowed the profile-fetch/
+  sign errors instead of logging them (CLAUDE.md rule #4), and the initials fallback read the
+  stale initial-render name instead of the live just-saved one.
 - [ ] Default "Inbox" collection provisioned on signup
 - [ ] Collections — create, rename, edit (description/color/icon)
 - [ ] Collections — delete (→ Trash, with affected-item-count confirmation)
