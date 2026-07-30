@@ -231,7 +231,10 @@ enable_confirmations = true
 # If enabled, users will need to reauthenticate or have logged in recently to change their password.
 secure_password_change = false
 # Controls the minimum amount of time that must pass before sending another signup confirmation or password reset email.
-max_frequency = "1s"
+# docs/01_MVP/Authentication.md requires this at 60s (verification/reset requests rate-limited to
+# <=1/60s per email) — components/auth/resend-verification-button.tsx and
+# components/auth/forgot-password-form.tsx both assume this window.
+max_frequency = "60s"
 # Number of characters used in the email OTP.
 otp_length = 6
 # Number of seconds before the email OTP expires (defaults to 1 hour).
@@ -258,6 +261,13 @@ otp_expiry = 3600
 [auth.email.template.confirmation]
 subject = "Confirm your email"
 content_path = "./supabase/templates/confirmation.html"
+
+# Same reasoning as the confirmation template above — points "Reset password" at our own
+# /auth/confirm route (token_hash + type=recovery) instead of Supabase's default fragment-based
+# redirect. See docs/01_MVP/Authentication.md's Password Reset section.
+[auth.email.template.recovery]
+subject = "Reset your password"
+content_path = "./supabase/templates/recovery.html"
 
 # Uncomment to customize notification email template
 # [auth.email.notification.password_changed]

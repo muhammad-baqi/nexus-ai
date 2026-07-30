@@ -33,6 +33,17 @@ describe("GET /auth/confirm", () => {
     );
   });
 
+  it("calls verifyOtp and redirects to /reset-password?status=success on a valid token_hash + type=recovery", async () => {
+    verifyOtp.mockResolvedValue({ error: null });
+
+    const response = await GET(requestFor("?token_hash=abc123&type=recovery"));
+
+    expect(verifyOtp).toHaveBeenCalledWith({ token_hash: "abc123", type: "recovery" });
+    expect(response.headers.get("location")).toBe(
+      "http://localhost:3000/reset-password?status=success",
+    );
+  });
+
   it("redirects to status=invalid without calling verifyOtp when token_hash is missing", async () => {
     const response = await GET(requestFor("?type=email"));
 
@@ -43,7 +54,7 @@ describe("GET /auth/confirm", () => {
   });
 
   it("redirects to status=invalid without calling verifyOtp when type is unsupported", async () => {
-    const response = await GET(requestFor("?token_hash=abc123&type=recovery"));
+    const response = await GET(requestFor("?token_hash=abc123&type=bogus"));
 
     expect(verifyOtp).not.toHaveBeenCalled();
     expect(response.headers.get("location")).toBe(
@@ -58,6 +69,16 @@ describe("GET /auth/confirm", () => {
 
     expect(response.headers.get("location")).toBe(
       "http://localhost:3000/verify-email?status=expired",
+    );
+  });
+
+  it("redirects to /reset-password?status=expired for an expired recovery token", async () => {
+    verifyOtp.mockResolvedValue({ error: { message: "Token has expired", code: "otp_expired" } });
+
+    const response = await GET(requestFor("?token_hash=abc123&type=recovery"));
+
+    expect(response.headers.get("location")).toBe(
+      "http://localhost:3000/reset-password?status=expired",
     );
   });
 

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 
@@ -116,6 +117,9 @@ export function LoginForm() {
         {fieldErrors.password && (
           <p className="text-destructive text-sm">{fieldErrors.password}</p>
         )}
+        <Link href="/forgot-password" className="text-sm font-medium underline self-start">
+          Forgot password?
+        </Link>
       </div>
 
       {status === "invalid-credentials" && (
