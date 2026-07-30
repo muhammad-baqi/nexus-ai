@@ -16,7 +16,9 @@ Managed primarily by Supabase Auth; the application maintains a linked
 
 - `id` (matches Supabase Auth user id)
 - `display_name`
-- `avatar_url`
+- `avatar_url` — despite the name, stores a private Storage *object path* (e.g.
+  `{user_id}/avatar`), not a public URL — the `avatars` bucket is private, so callers must sign
+  it via `createSignedUrl` before rendering (see `lib/supabase/avatar.ts`)
 - `theme_preference`
 - `notification_email_enabled`
 - `created_at`
