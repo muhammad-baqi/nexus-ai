@@ -5,8 +5,8 @@
 > and release cadence are `docs/00_Project/Roadmap.md`.
 > `[ ]` = not started · `[~]` = in progress · `[x]` = done & committed.
 
-Last updated: 2026-07-29 — Day 2: Register, Email verification, Login, and Logout shipped
-(4/16). Vercel is
+Last updated: 2026-07-30 — Day 2: Register, Email verification, Login, Logout, Password reset,
+Change password, and Delete account shipped (7/16). Vercel is
 connected (one project tracking `main`; a second project tracking `staging` is still
 outstanding, see infra note below). `develop`/`staging`/`main` were promoted early as a
 connection test — `nexus-prod` Supabase schema push is still outstanding too.
@@ -89,7 +89,7 @@ qdhtdqccuycljzvzvyis && supabase db push`, migration `001_initial_schema.sql`) �
 initial setup but was never linked/pushed. Re-linked back to `nexus-staging` afterward so local
 CLI commands don't default to prod.
 
-## Day 2 — Core Platform (v0.1) — release Tuesday (4/16)
+## Day 2 — Core Platform (v0.1) — release Tuesday (7/16)
 
 - [x] Register (email + password) — `app/register`, `components/auth/register-form.tsx`; no
   custom API route (Supabase Auth client SDK direct from the frontend, per API_Design.md).
@@ -152,9 +152,32 @@ CLI commands don't default to prod.
   in/Register links. 39/39 unit tests green, typecheck clean. Self-review: clean approve, no
   critical/warning findings; applied the one suggestion (explicit `signOut` scope).
   `e2e/logout.spec.ts` (written then, later confirmed green — Day 1 note above).
-- [ ] Password reset (request + set new password)
-- [ ] Change password (logged in)
-- [ ] Delete account (cascading)
+- [x] Password reset (request + set new password) — reuses `app/auth/confirm/route.ts` (now
+  handling both `type=email` and `type=recovery`) instead of Supabase's default fragment-based
+  verify link, same trick Email Verification already established. New `/forgot-password` (always
+  the same "if an account exists..." message, no enumeration) and `/reset-password` pages.
+  Setting the new password calls `signOut({scope: "global"})`, ending every session including the
+  one the recovery link just established, per `Authentication.md`. Verified live: real Mailpit
+  round-trip (request → email → `/auth/confirm?type=recovery` → `/reset-password` → new password
+  → forced back to `/login` → old password rejected, new one works).
+- [x] Change password (logged in) — `components/auth/change-password-form.tsx` on the new
+  `/settings` page; re-verifies the current password via `signInWithPassword` before calling
+  `updateUser`, then `signOut({scope: "others"})` — other sessions end, the current tab stays
+  signed in (distinct from Password Reset's `scope: "global"`). Verified live.
+- [x] Delete account (cascading) — password-confirmation gate, irreversible-action warning;
+  `app/api/auth/account/route.ts` re-verifies the password via a stateless client, best-effort
+  cleans up the user's avatar Storage objects, then calls a new service-role admin client
+  (`lib/supabase/admin.ts`) to delete the auth user. Cascading delete of `profiles`/
+  `collections`/`knowledge_items` is handled entirely by the `on delete cascade` FKs already in
+  `supabase/migrations/001_initial_schema.sql` — verified live directly against Postgres (user,
+  profile, and Inbox collection rows all gone after deletion, not just a 200 response). Also
+  introduces `app/(app)/layout.tsx`, a shared auth-gated route group Settings/Collections/
+  Dashboard all build on, and fixed `supabase/config.toml`'s `max_frequency` (was `1s`, now `60s`
+  to actually match `Authentication.md`'s 1-request-per-60s rate limit both this feature's and
+  Email Verification's resend flows rely on). 86/86 unit/integration tests green, typecheck
+  clean. Self-review (code-reviewer subagent) caught a real issue — avatar Storage cleanup
+  silently swallowed a resolved `{error}` response instead of just a thrown exception — fixed and
+  covered by a new test.
 - [ ] Profile management — display name, avatar (basic)
 - [ ] Default "Inbox" collection provisioned on signup
 - [ ] Collections — create, rename, edit (description/color/icon)
