@@ -3,9 +3,12 @@ import { z } from "zod";
 // avatar_path is the Storage object path under the private "avatars" bucket (see
 // supabase/migrations/002_avatars_storage.sql) — never a public URL. It's persisted into
 // profiles.avatar_url and turned back into a short-lived signed URL on read.
+export const THEME_PREFERENCES = ["light", "dark", "system"] as const;
+
 export const profileUpdateSchema = z.object({
   display_name: z.string().trim().max(100).optional(),
   avatar_path: z.string().max(500).nullable().optional(),
+  theme_preference: z.enum(THEME_PREFERENCES).optional(),
 });
 
 export type ProfileUpdateInput = z.infer<typeof profileUpdateSchema>;

@@ -26,21 +26,27 @@ vi.mock("next/navigation", () => ({
 import SettingsPage from "./page";
 
 describe("SettingsPage", () => {
-  it("renders Profile, Change Password, and Delete Account sections", async () => {
+  it("renders Profile, Theme, Change Password, and Delete Account sections", async () => {
     getUser.mockResolvedValue({ data: { user: { id: "user-1", email: "user@example.com" } } });
-    single.mockResolvedValue({ data: { display_name: "Ada", avatar_url: null } });
+    single.mockResolvedValue({
+      data: { display_name: "Ada", avatar_url: null, theme_preference: "system" },
+    });
 
     render(await SettingsPage());
 
     expect(screen.getByRole("heading", { name: /profile/i })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /^theme$/i })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: /change password/i })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: /delete account/i })).toBeInTheDocument();
     expect(screen.getByLabelText("Display name")).toHaveValue("Ada");
+    expect(screen.getByRole("button", { name: "System" })).toHaveAttribute("aria-pressed", "true");
   });
 
   it("signs the avatar path into a URL when one is set", async () => {
     getUser.mockResolvedValue({ data: { user: { id: "user-1", email: "user@example.com" } } });
-    single.mockResolvedValue({ data: { display_name: null, avatar_url: "user-1/avatar.png" } });
+    single.mockResolvedValue({
+      data: { display_name: null, avatar_url: "user-1/avatar.png", theme_preference: "dark" },
+    });
     createSignedUrl.mockResolvedValue({ data: { signedUrl: "https://signed.example.com/avatar" } });
 
     render(await SettingsPage());

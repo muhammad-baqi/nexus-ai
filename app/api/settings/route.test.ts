@@ -109,6 +109,22 @@ describe("PATCH /api/settings", () => {
     expect(await response.json()).toEqual({ display_name: "Ada", avatar_url: null });
   });
 
+  it("updates only the theme_preference column when only theme_preference is sent", async () => {
+    getUser.mockResolvedValue({ data: { user: { id: "user-1" } } });
+    selectAfterUpdate.mockResolvedValue({
+      data: { display_name: null, avatar_url: null, theme_preference: "dark" },
+    });
+
+    const response = await PATCH(patchRequestWith({ theme_preference: "dark" }));
+
+    expect(update).toHaveBeenCalledWith({ theme_preference: "dark" });
+    expect(await response.json()).toEqual({
+      display_name: null,
+      avatar_url: null,
+      theme_preference: "dark",
+    });
+  });
+
   it("updates only the avatar_url column when only avatar_path is sent", async () => {
     getUser.mockResolvedValue({ data: { user: { id: "user-1" } } });
     selectAfterUpdate.mockResolvedValue({

@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { ChangePasswordForm } from "@/components/auth/change-password-form";
 import { DeleteAccountForm } from "@/components/auth/delete-account-form";
 import { ProfileForm } from "@/components/settings/profile-form";
+import { ThemeToggle } from "@/components/settings/theme-toggle";
 
 export const metadata: Metadata = {
   title: "Settings — Nexus",
@@ -20,7 +21,7 @@ export default async function SettingsPage() {
   // present here — narrowed for TypeScript.
   const { data: profile, error } = await supabase
     .from("profiles")
-    .select("display_name, avatar_url")
+    .select("display_name, avatar_url, theme_preference")
     .eq("id", user!.id)
     .single();
 
@@ -37,6 +38,10 @@ export default async function SettingsPage() {
         initialAvatarUrl={await signAvatarUrl(supabase, profile?.avatar_url ?? null)}
         email={user!.email!}
       />
+
+      <hr className="border-border" />
+
+      <ThemeToggle initialPreference={profile?.theme_preference ?? "system"} />
 
       <hr className="border-border" />
 

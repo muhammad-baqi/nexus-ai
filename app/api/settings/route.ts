@@ -19,7 +19,7 @@ export async function GET() {
 
   const { data: profile, error } = await supabase
     .from("profiles")
-    .select("display_name, avatar_url")
+    .select("display_name, avatar_url, theme_preference")
     .eq("id", user.id)
     .single();
 
@@ -34,6 +34,7 @@ export async function GET() {
   return NextResponse.json({
     display_name: profile.display_name,
     avatar_url: await signAvatarUrl(supabase, profile.avatar_url),
+    theme_preference: profile.theme_preference,
   });
 }
 
@@ -73,12 +74,15 @@ export async function PATCH(request: NextRequest) {
   const updates: Record<string, string | null> = {};
   if (result.data.display_name !== undefined) updates.display_name = result.data.display_name;
   if (result.data.avatar_path !== undefined) updates.avatar_url = result.data.avatar_path;
+  if (result.data.theme_preference !== undefined) {
+    updates.theme_preference = result.data.theme_preference;
+  }
 
   const { data: profile, error } = await supabase
     .from("profiles")
     .update(updates)
     .eq("id", user.id)
-    .select("display_name, avatar_url")
+    .select("display_name, avatar_url, theme_preference")
     .single();
 
   if (error) {
@@ -92,5 +96,6 @@ export async function PATCH(request: NextRequest) {
   return NextResponse.json({
     display_name: profile.display_name,
     avatar_url: await signAvatarUrl(supabase, profile.avatar_url),
+    theme_preference: profile.theme_preference,
   });
 }

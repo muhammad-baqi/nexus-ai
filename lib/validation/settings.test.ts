@@ -23,4 +23,11 @@ describe("profileUpdateSchema", () => {
     ).toBe(true);
     expect(profileUpdateSchema.safeParse({ avatar_path: null }).success).toBe(true);
   });
+
+  it("accepts each valid theme_preference and rejects an invalid one", () => {
+    expect(profileUpdateSchema.safeParse({ theme_preference: "light" }).success).toBe(true);
+    expect(profileUpdateSchema.safeParse({ theme_preference: "dark" }).success).toBe(true);
+    expect(profileUpdateSchema.safeParse({ theme_preference: "system" }).success).toBe(true);
+    expect(profileUpdateSchema.safeParse({ theme_preference: "solarized" }).success).toBe(false);
+  });
 });
