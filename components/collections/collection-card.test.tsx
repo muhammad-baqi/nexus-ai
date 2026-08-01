@@ -37,6 +37,16 @@ describe("CollectionCard", () => {
     expect(await screen.findByText(/3 items/i)).toBeInTheDocument();
   });
 
+  it("links the collection name to its detail page", async () => {
+    mockFetchSequence({ json: async () => ({ total: 3, by_type: {}, last_updated: null }) });
+    render(<CollectionCard collection={baseCollection} onChanged={vi.fn()} />);
+
+    expect(screen.getByRole("link", { name: "Travel" })).toHaveAttribute(
+      "href",
+      "/collections/col-1",
+    );
+  });
+
   it("shows a star for a favorited collection", () => {
     render(
       <CollectionCard collection={{ ...baseCollection, is_favorite: true }} onChanged={vi.fn()} />,

@@ -80,3 +80,28 @@ leave them as a style reference; either is fine.)*
 - [x] The landing page renders "Signed in as {email}" and a working Logout button when `getUser()` returns a user
 - [x] The landing page renders Log in/Register links and no Logout button when `getUser()` returns no user
 - [x] (Playwright `@smoke`) Register, verify via the real Mailpit link (already signed in), confirm `/` shows the signed-in state, log out, confirm no session cookie remains — green, running the real Chromium browser (`e2e/logout.spec.ts`).
+
+## Notes — create, edit title/body (Day 3)
+- [x] `CollectionCard`'s name links to `/collections/:id` (needed so a collection's notes are reachable at all)
+- [x] `createNoteSchema` rejects a missing/malformed `collection_id`
+- [x] `createNoteSchema` rejects a title over 200 characters
+- [x] `updateItemSchema` rejects an empty payload (no fields at all)
+- [x] `updateItemSchema` rejects a whitespace-only title
+- [x] `POST /api/items` defaults the title to "Untitled Note" when omitted
+- [x] `POST /api/items` always inserts `type: "note"` regardless of what's in the payload
+- [x] `POST /api/items` returns 404 when `collection_id` doesn't belong to the caller (or is trashed) — the ownership check the self-review caught
+- [x] `POST /api/items` returns 400 when `collection_id` is missing
+- [x] `POST /api/items` returns 500 and logs server-side on an insert failure
+- [x] `GET /api/items` only returns the caller's own items (`owner_id` filter passed to the query)
+- [x] `GET /api/items` applies the `collection_id` filter when provided
+- [x] `GET /api/items/:id` returns 404 (`not_found`) for an id that doesn't exist or belongs to another user
+- [x] `PATCH /api/items/:id` updates title/description and returns the updated row
+- [x] `PATCH /api/items/:id` returns 400 when the payload has no fields
+- [x] `PATCH /api/items/:id` returns 404 (`not_found`) on a nonexistent/foreign id
+- [x] `NoteEditor` loads the existing title/body into the form fields on mount
+- [x] `NoteEditor`'s Save button calls `PATCH` with the edited title/body
+- [x] `NoteEditor` shows an inline error for a blank title and never calls `PATCH`
+- [x] `NoteEditor` shows a generic retry-able error when the save request fails
+- [x] `CollectionDetailView`'s "New Note" button POSTs with the current `collection_id` and navigates to the created item's editor page
+- [x] `CollectionDetailView` lists existing notes, falling back to "Untitled Note" for a blank title
+- [x] (Playwright `@smoke`) Register, open the default Inbox collection, create a note, edit title + body, Save, reload the page, confirm both persisted — green, running the real Chromium browser (`e2e/notes.spec.ts`).

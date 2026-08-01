@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState, type FormEvent } from "react";
 
 import {
@@ -206,7 +207,9 @@ export function CollectionCard({ collection, onChanged }: Props) {
         <div>
           <h3 className="font-semibold">
             {collection.is_favorite && <span aria-label="Favorited">★ </span>}
-            {collection.name}
+            <Link href={`/collections/${collection.id}`} className="hover:underline">
+              {collection.name}
+            </Link>
           </h3>
           {collection.description && (
             <p className="text-muted-foreground text-sm">{collection.description}</p>
