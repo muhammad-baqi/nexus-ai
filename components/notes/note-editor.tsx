@@ -6,6 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { NoteBody } from "@/components/notes/note-body";
+import { DEFAULT_NOTE_TITLE } from "@/lib/validation/items";
 
 type Item = {
   id: string;
@@ -26,11 +28,12 @@ async function parseErrorMessage(response: Response, fallback: string) {
 export function NoteEditor({ itemId }: Props) {
   const [item, setItem] = useState<Item | null>(null);
   const [loadError, setLoadError] = useState<string | undefined>();
+  const [mode, setMode] = useState<"view" | "edit">("view");
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
   const [titleError, setTitleError] = useState<string | undefined>();
   const [saveError, setSaveError] = useState<string | undefined>();
-  const [status, setStatus] = useState<"idle" | "saving" | "saved">("idle");
+  const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -41,6 +44,11 @@ export function NoteEditor({ itemId }: Props) {
         setItem(data);
         setTitle(data.title);
         setBody(data.description ?? "");
+        // A just-created note (still the server-assigned default title, no body yet) has
+        // nothing to show in view mode — open straight into editing instead of forcing an
+        // extra "Edit" click before the user can type anything (CLAUDE.md: save in <10s).
+        const isFreshlyCreated = data.title === DEFAULT_NOTE_TITLE && !data.description?.trim();
+        setMode(isFreshlyCreated ? "edit" : "view");
       })
       .catch(() => {
         if (!cancelled) setLoadError("This note couldn't be loaded — it may have been removed.");
@@ -50,6 +58,21 @@ export function NoteEditor({ itemId }: Props) {
     };
   }, [itemId]);
 
+  function startEditing() {
+    if (!item) return;
+    setTitle(item.title);
+    setBody(item.description ?? "");
+    setTitleError(undefined);
+    setSaveError(undefined);
+    setMode("edit");
+  }
+
+  function cancelEditing() {
+    setTitleError(undefined);
+    setSaveError(undefined);
+    setMode("view");
+  }
+
   async function handleSave() {
     if (!title.trim()) {
       setTitleError("Title is required");
@@ -57,7 +80,7 @@ export function NoteEditor({ itemId }: Props) {
     }
     setTitleError(undefined);
     setSaveError(undefined);
-    setStatus("saving");
+    setIsSaving(true);
 
     const response = await fetch(`/api/items/${itemId}`, {
       method: "PATCH",
@@ -65,15 +88,16 @@ export function NoteEditor({ itemId }: Props) {
       body: JSON.stringify({ title: title.trim(), description: body }),
     });
 
+    setIsSaving(false);
+
     if (!response.ok) {
-      setStatus("idle");
       setSaveError(await parseErrorMessage(response, "Something went wrong saving this note."));
       return;
     }
 
     const updated: Item = await response.json();
     setItem(updated);
-    setStatus("saved");
+    setMode("view");
   }
 
   if (loadError) {
@@ -88,48 +112,58 @@ export function NoteEditor({ itemId }: Props) {
     return <p className="text-muted-foreground text-sm">Loading…</p>;
   }
 
-  return (
-    <div className="flex flex-col gap-4">
-      <div className="flex flex-col gap-1.5">
-        <Label htmlFor="note-title">Title</Label>
-        <Input
-          id="note-title"
-          value={title}
-          onChange={(e) => {
-            setTitle(e.target.value);
-            setStatus("idle");
-          }}
-          aria-invalid={!!titleError}
-        />
-        {titleError && (
+  if (mode === "edit") {
+    return (
+      <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="note-title">Title</Label>
+          <Input
+            id="note-title"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            aria-invalid={!!titleError}
+          />
+          {titleError && (
+            <p className="text-destructive text-sm" role="alert">
+              {titleError}
+            </p>
+          )}
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="note-body">Body</Label>
+          <Textarea
+            id="note-body"
+            value={body}
+            onChange={(e) => setBody(e.target.value)}
+            rows={16}
+          />
+        </div>
+        {saveError && (
           <p className="text-destructive text-sm" role="alert">
-            {titleError}
+            {saveError}
           </p>
         )}
+        <div className="flex items-center gap-2">
+          <Button type="button" onClick={handleSave} disabled={isSaving}>
+            {isSaving ? "Saving..." : "Save"}
+          </Button>
+          <Button type="button" variant="outline" onClick={cancelEditing} disabled={isSaving}>
+            Cancel
+          </Button>
+        </div>
       </div>
-      <div className="flex flex-col gap-1.5">
-        <Label htmlFor="note-body">Body</Label>
-        <Textarea
-          id="note-body"
-          value={body}
-          onChange={(e) => {
-            setBody(e.target.value);
-            setStatus("idle");
-          }}
-          rows={16}
-        />
-      </div>
-      {saveError && (
-        <p className="text-destructive text-sm" role="alert">
-          {saveError}
-        </p>
-      )}
-      <div className="flex items-center gap-3">
-        <Button type="button" onClick={handleSave} disabled={status === "saving"}>
-          {status === "saving" ? "Saving..." : "Save"}
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex items-start justify-between gap-4">
+        <h1 className="text-2xl font-semibold">{item.title}</h1>
+        <Button type="button" variant="outline" size="sm" onClick={startEditing}>
+          Edit
         </Button>
-        {status === "saved" && <span className="text-muted-foreground text-sm">Saved</span>}
       </div>
+      <NoteBody content={item.description ?? ""} />
     </div>
   );
 }

@@ -19,17 +19,30 @@ describe("NoteEditor", () => {
     vi.stubGlobal("fetch", vi.fn());
   });
 
-  it("loads the existing title/body into the form fields on mount", async () => {
+  it("opens in view mode, rendering the body instead of the textarea", async () => {
     (fetch as ReturnType<typeof vi.fn>).mockResolvedValue(jsonResponse(baseItem));
 
     render(<NoteEditor itemId="item-1" />);
 
-    expect(await screen.findByDisplayValue("Trip planning")).toBeInTheDocument();
-    expect(screen.getByDisplayValue("Packing list")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Trip planning" })).toBeInTheDocument();
+    expect(screen.getByText("Packing list")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Title")).not.toBeInTheDocument();
     expect(fetch).toHaveBeenCalledWith("/api/items/item-1");
   });
 
-  it("shows a load error and never renders the form when the fetch fails", async () => {
+  it("a freshly created note (default title, empty body) opens straight into edit mode", async () => {
+    (fetch as ReturnType<typeof vi.fn>).mockResolvedValue(
+      jsonResponse({ ...baseItem, title: "Untitled Note", description: null }),
+    );
+
+    render(<NoteEditor itemId="item-1" />);
+
+    expect(await screen.findByLabelText("Title")).toBeInTheDocument();
+    expect(screen.getByLabelText("Body")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Untitled Note" })).not.toBeInTheDocument();
+  });
+
+  it("shows a load error and never renders the view or the form when the fetch fails", async () => {
     (fetch as ReturnType<typeof vi.fn>).mockResolvedValue(jsonResponse(null, false));
 
     render(<NoteEditor itemId="item-1" />);
@@ -38,13 +51,30 @@ describe("NoteEditor", () => {
     expect(screen.queryByLabelText("Title")).not.toBeInTheDocument();
   });
 
-  it("Save calls PATCH with the edited title and body", async () => {
-    (fetch as ReturnType<typeof vi.fn>)
-      .mockResolvedValueOnce(jsonResponse(baseItem))
-      .mockResolvedValueOnce(jsonResponse({ ...baseItem, title: "Trip planning (updated)" }));
+  it("clicking Edit switches to the textarea, pre-filled with the raw Markdown source", async () => {
+    (fetch as ReturnType<typeof vi.fn>).mockResolvedValue(
+      jsonResponse({ ...baseItem, description: "# Heading with **bold** text" }),
+    );
 
     render(<NoteEditor itemId="item-1" />);
-    await screen.findByDisplayValue("Trip planning");
+    await screen.findByRole("heading", { name: "Trip planning" });
+
+    fireEvent.click(screen.getByRole("button", { name: /^edit$/i }));
+
+    expect(screen.getByDisplayValue("Trip planning")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("# Heading with **bold** text")).toBeInTheDocument();
+  });
+
+  it("Save calls PATCH with the edited title/body and returns to view mode showing the update", async () => {
+    (fetch as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(jsonResponse(baseItem))
+      .mockResolvedValueOnce(
+        jsonResponse({ ...baseItem, title: "Trip planning (updated)", description: "Updated packing list" }),
+      );
+
+    render(<NoteEditor itemId="item-1" />);
+    await screen.findByRole("heading", { name: "Trip planning" });
+    fireEvent.click(screen.getByRole("button", { name: /^edit$/i }));
 
     fireEvent.change(screen.getByLabelText("Title"), {
       target: { value: "Trip planning (updated)" },
@@ -52,7 +82,10 @@ describe("NoteEditor", () => {
     fireEvent.change(screen.getByLabelText("Body"), { target: { value: "Updated packing list" } });
     fireEvent.click(screen.getByRole("button", { name: /^save$/i }));
 
-    expect(await screen.findByText("Saved")).toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { name: "Trip planning (updated)" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Updated packing list")).toBeInTheDocument();
     expect(fetch).toHaveBeenCalledWith(
       "/api/items/item-1",
       expect.objectContaining({
@@ -62,11 +95,26 @@ describe("NoteEditor", () => {
     );
   });
 
+  it("Cancel discards the draft and returns to view mode unchanged", async () => {
+    (fetch as ReturnType<typeof vi.fn>).mockResolvedValue(jsonResponse(baseItem));
+
+    render(<NoteEditor itemId="item-1" />);
+    await screen.findByRole("heading", { name: "Trip planning" });
+    fireEvent.click(screen.getByRole("button", { name: /^edit$/i }));
+
+    fireEvent.change(screen.getByLabelText("Title"), { target: { value: "Discarded title" } });
+    fireEvent.click(screen.getByRole("button", { name: /^cancel$/i }));
+
+    expect(screen.getByRole("heading", { name: "Trip planning" })).toBeInTheDocument();
+    expect(screen.queryByText("Discarded title")).not.toBeInTheDocument();
+  });
+
   it("shows an inline error for a blank title and never calls PATCH", async () => {
     (fetch as ReturnType<typeof vi.fn>).mockResolvedValue(jsonResponse(baseItem));
 
     render(<NoteEditor itemId="item-1" />);
-    await screen.findByDisplayValue("Trip planning");
+    await screen.findByRole("heading", { name: "Trip planning" });
+    fireEvent.click(screen.getByRole("button", { name: /^edit$/i }));
     (fetch as ReturnType<typeof vi.fn>).mockClear();
 
     fireEvent.change(screen.getByLabelText("Title"), { target: { value: "   " } });
@@ -76,16 +124,19 @@ describe("NoteEditor", () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
-  it("shows a generic retry-able error when the save request fails", async () => {
+  it("a failed save shows a generic retry-able error and stays in edit mode with the draft intact", async () => {
     (fetch as ReturnType<typeof vi.fn>)
       .mockResolvedValueOnce(jsonResponse(baseItem))
       .mockResolvedValueOnce(jsonResponse({ error: { message: "boom" } }, false));
 
     render(<NoteEditor itemId="item-1" />);
-    await screen.findByDisplayValue("Trip planning");
+    await screen.findByRole("heading", { name: "Trip planning" });
+    fireEvent.click(screen.getByRole("button", { name: /^edit$/i }));
+    fireEvent.change(screen.getByLabelText("Title"), { target: { value: "Draft title" } });
 
     fireEvent.click(screen.getByRole("button", { name: /^save$/i }));
 
     expect(await screen.findByText("boom")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("Draft title")).toBeInTheDocument();
   });
 });

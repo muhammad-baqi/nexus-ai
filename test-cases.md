@@ -98,10 +98,30 @@ leave them as a style reference; either is fine.)*
 - [x] `PATCH /api/items/:id` updates title/description and returns the updated row
 - [x] `PATCH /api/items/:id` returns 400 when the payload has no fields
 - [x] `PATCH /api/items/:id` returns 404 (`not_found`) on a nonexistent/foreign id
-- [x] `NoteEditor` loads the existing title/body into the form fields on mount
+- [x] `NoteEditor` loads the item and shows it (superseded by the rich-formatting feature below —
+  now a rendered view by default, not the raw form fields)
 - [x] `NoteEditor`'s Save button calls `PATCH` with the edited title/body
 - [x] `NoteEditor` shows an inline error for a blank title and never calls `PATCH`
 - [x] `NoteEditor` shows a generic retry-able error when the save request fails
 - [x] `CollectionDetailView`'s "New Note" button POSTs with the current `collection_id` and navigates to the created item's editor page
 - [x] `CollectionDetailView` lists existing notes, falling back to "Untitled Note" for a blank title
-- [x] (Playwright `@smoke`) Register, open the default Inbox collection, create a note, edit title + body, Save, reload the page, confirm both persisted — green, running the real Chromium browser (`e2e/notes.spec.ts`).
+- [x] (Playwright `@smoke`) Register, open the default Inbox collection, create a note, edit title + body, Save, reload the page, confirm both persisted (superseded — this scenario is now folded into the extended `e2e/notes.spec.ts` test under the rich-formatting heading below, which also covers formatting).
+
+## Notes — rich formatting (Day 3)
+- [x] `NoteBody` shows a "No content yet" placeholder for an empty or whitespace-only body
+- [x] `NoteBody` renders `#`/`##` as real `<h1>`/`<h2>` heading elements
+- [x] `NoteBody` renders `**bold**`/`_italic_`/`~~strikethrough~~` as `<strong>`/`<em>`/`<del>`
+- [x] `NoteBody` renders `-`/`1.` lists as real `<ul>`/`<ol>` elements
+- [x] `NoteBody` renders a GFM table (`| A | B |`) as real `<table>`/`<th>`/`<td>` elements
+- [x] `NoteBody` renders a link as a real `<a>` opening in a new tab with `rel="noopener"`
+- [x] `NoteBody` renders `- [x]`/`- [ ]` task-list items as disabled checkboxes with the correct checked state
+- [x] `NoteBody` renders a fenced code block with a language tag as highlighted `<code class="hljs language-*">`
+- [x] `NoteBody` renders raw HTML embedded in the source as literal escaped text, not executed markup (XSS-safety case)
+- [x] `NoteBody` does not turn a `javascript:` link into an executable `href` (self-review-requested regression case, alongside the raw-HTML one)
+- [x] `NoteEditor` opens in view mode (rendered body), not the raw textarea — for a note that already has content
+- [x] `NoteEditor` opens straight into edit mode for a freshly created note (default title, empty body) — self-review caught that always defaulting to view mode added a mandatory extra click before a brand-new note could be typed into at all, against the "save in under 10s" promise
+- [x] `NoteEditor`'s "Edit" button switches to the textarea, pre-filled with the raw Markdown source
+- [x] `NoteEditor`'s Save returns to view mode showing the newly rendered content
+- [x] `NoteEditor`'s "Cancel" button discards the draft and returns to view mode unchanged
+- [x] `NoteEditor` stays in edit mode with the draft intact when a save fails, showing the inline error (refined from the original plan's "click Edit again" framing — matches `CollectionCard`'s existing edit-form pattern of not auto-exiting on error)
+- [x] (Playwright `@smoke`, `e2e/notes.spec.ts` extended/renamed) Creating a note (lands in edit mode immediately), saving a body with a heading, bold text, and a checklist item renders real `<h1>`/`<strong>`/checkbox elements — both immediately after Save and again after a full page reload, not raw Markdown syntax; Edit still shows the raw source afterward.

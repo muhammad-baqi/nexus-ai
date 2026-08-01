@@ -128,3 +128,52 @@
     @apply font-sans;
   }
 }
+
+/* Hand-rolled highlight.js token styling (no imported theme stylesheet) — the app's design
+   tokens above are intentionally monochrome (0-chroma oklch), so syntax highlighting leans on
+   weight/style/opacity rather than introducing new hues, and both light/dark fall out of the
+   existing --foreground/--muted-foreground variables for free, same as every other themed
+   surface in the app. */
+.hljs {
+  color: var(--foreground);
+  background: transparent;
+}
+.hljs-comment,
+.hljs-quote {
+  color: var(--muted-foreground);
+  font-style: italic;
+}
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-literal,
+.hljs-name,
+.hljs-tag {
+  font-weight: 600;
+}
+.hljs-string,
+.hljs-doctag,
+.hljs-attr,
+.hljs-attribute {
+  color: var(--muted-foreground);
+}
+.hljs-title,
+.hljs-section,
+.hljs-built_in,
+.hljs-builtin-name,
+.hljs-type {
+  font-weight: 600;
+  color: var(--foreground);
+}
+.hljs-number {
+  font-weight: 500;
+}
+
+/* Task-list checkboxes from remark-gfm (via mdast-util-to-hast) come with this class and no
+   other hook — hide the redundant bullet and align the (disabled, for now) checkbox with text. */
+.task-list-item {
+  list-style: none;
+  margin-left: -1.5em;
+}
+.task-list-item input[type="checkbox"] {
+  margin-right: 0.5em;
+}
