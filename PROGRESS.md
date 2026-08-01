@@ -5,13 +5,19 @@
 > and release cadence are `docs/00_Project/Roadmap.md`.
 > `[ ]` = not started · `[~]` = in progress · `[x]` = done & committed.
 
-Last updated: 2026-07-30 — Day 2 code-complete on `develop`: all 16/16 features shipped
-(Register, Email verification, Login, Logout, Password reset, Change password, Delete account,
-Profile management, Collections, App nav/Dashboard shell, Theming). QA gate still to run before
-promoting to production. Vercel is
-connected (one project tracking `main`; a second project tracking `staging` is still
-outstanding, see infra note below). `develop`/`staging`/`main` were promoted early as a
-connection test — `nexus-prod` Supabase schema push is still outstanding too.
+Last updated: 2026-08-01 — **Day 2 QA gate passed**, both 🔴 blockers found and closed:
+`e2e/login.spec.ts`/`e2e/logout.spec.ts` were stale (still asserted the pre-Dashboard-shell
+landing-on-`/` behavior instead of the redirect to `/dashboard`) — fixed on
+`fix/e2e-dashboard-redirect`, all 5 `@smoke` tests green. `npm run build` fails locally in this
+Docker/Windows dev environment — both Turbopack and `--webpack` throw inside React internals
+while prerendering Next's own auto-generated `/_not-found`/`/_global-error` boilerplate pages
+(not app code), reproducible on a clean `next_cache` volume; **confirmed NOT a production
+issue** — Vercel's `main` deploy from the same commit built and is live. Treat as a known
+local-only environment quirk (Turbopack/webpack + Windows bind-mount over Docker Desktop,
+likely) alongside the Day 1 dev-cache-staleness note below — don't re-diagnose it as an app bug;
+re-investigate only if it starts affecting Vercel too. `develop`/`staging`/`main` are in sync.
+Infra is now fully set up: two Vercel projects (staging → `staging`, production → `main`), two
+Supabase projects (`nexus-staging`, `nexus-prod`) with all 3 migrations applied to both.
 
 ---
 
@@ -45,10 +51,12 @@ connection test — `nexus-prod` Supabase schema push is still outstanding too.
 **Day 1 status: done.** Vercel is connected and deploying on push.
 
 **Outstanding infra (not blocking Day 2 feature work, revisit before relying on them):**
-- Second Vercel project tracking `staging` (currently only one project, tracking `main`) — still
-  needs to be created via the Vercel dashboard/CLI (no `vercel` CLI or token available in this
-  environment); `nexus-prod`'s Supabase schema is now pushed (below), so once this project
-  exists both prod-side pieces are done.
+- ~~Second Vercel project tracking `staging`~~ — **done 2026-08-01**: two Vercel projects now
+  exist (staging → `staging`, production → `main`); `nexus-prod`'s schema was already pushed, so
+  both prod-side pieces are complete.
+- Supabase Auth's Site URL/Redirect URLs (both projects) still point at `localhost:3000` —
+  expected while testing locally, needs pointing at the real Vercel URLs before testing a
+  deployed (non-localhost) signed-in flow.
 - Local dev: the browser can't reach `NEXT_PUBLIC_SUPABASE_URL=http://host.docker.internal:54321`
   (only resolvable from inside the app's Docker container, not from a host browser) — blocks
   driving a real signed-in flow against local Supabase from a host browser. Needs either a
