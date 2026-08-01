@@ -19,9 +19,9 @@ re-investigate only if it starts affecting Vercel too. `develop`/`staging`/`main
 Infra is now fully set up: two Vercel projects (staging → `staging`, production → `main`), two
 Supabase projects (`nexus-staging`, `nexus-prod`) with all 3 migrations applied to both.
 
-**Day 3 started**: Notes — create, edit title/body shipped (1/11) — see below. `develop` is
-ahead of `staging`/`main` again as normal feature work resumes (Day 3 releases to staging only,
-not production, per `Roadmap.md`).
+**Day 3 in progress (2/11)**: Notes — create/edit title+body, and Notes — rich formatting, both
+shipped — see below. `develop` is ahead of `staging`/`main` again as normal feature work resumes
+(Day 3 releases to staging only, not production, per `Roadmap.md`).
 
 ---
 
@@ -264,7 +264,7 @@ CLI commands don't default to prod.
   `.claude/docs/git-workflow.md`. Day 2 QA gate (`.claude/docs/qa-checklist.md`) still to run
   before that promotion.
 
-## Day 3 — Knowledge Management — release Wednesday (staging only) (1/11)
+## Day 3 — Knowledge Management — release Wednesday (staging only) (2/11)
 
 - [x] Notes — create, edit title/body — `app/api/items` (list/create) + `app/api/items/:id`
   (get/update) against the existing `knowledge_items` table (type='note'); no new migration, RLS
@@ -283,8 +283,21 @@ CLI commands don't default to prod.
   (new `e2e/notes.spec.ts`: create → edit title+body → Save → reload → confirms persistence).
   RLS cross-user isolation confirmed live against PostgREST with two real accounts (not just
   mocked): user B's token returns an empty result for user A's note id.
-- [ ] Notes — rich formatting (headings, bold/italic, lists, checklists, code blocks, tables, links, inline images)
-- [ ] Notes — rich formatting (headings, bold/italic, lists, checklists, code blocks, tables, links, inline images)
+- [x] Notes — rich formatting (headings, bold/italic, lists, checklists, code blocks, tables,
+  links, inline images) — `components/notes/note-body.tsx` renders the Markdown body via
+  `react-markdown` + `remark-gfm` + `rehype-highlight` (first content-rendering library in the
+  repo — safe by default: no `dangerouslySetInnerHTML`, raw HTML escaped not executed, dangerous
+  URL schemes stripped, since note bodies are unsanitized user content). `NoteEditor` now opens
+  in a read-only rendered view by default (Edit switches to the existing raw-textarea editor,
+  Save returns to view); checklist checkboxes render disabled — toggling from the view and the
+  WYSIWYG/raw-toggle surface are separate, later Day 3 lines below. Self-review (code-reviewer
+  subagent) caught two real issues, both fixed: the mode-toggle refactor broke the existing
+  `e2e/notes.spec.ts` smoke test without updating it (rewritten, now also asserts real rendered
+  elements post-save/reload, not raw Markdown syntax); and always defaulting new notes to view
+  mode forced an extra "Edit" click before a brand-new empty note could be typed into at all,
+  against the "save in under 10s" promise — fixed to open freshly-created notes straight into
+  edit mode. 248/248 unit/integration tests green (12 new), typecheck + lint clean, all 6
+  Playwright `@smoke` tests green.
 - [ ] Notes — Markdown source / WYSIWYG toggle
 - [ ] Notes — autosave (debounced, save-status indicator, retry on failure)
 - [ ] Notes — version history (view list, view a version, restore)
