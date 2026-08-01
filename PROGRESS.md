@@ -19,6 +19,10 @@ re-investigate only if it starts affecting Vercel too. `develop`/`staging`/`main
 Infra is now fully set up: two Vercel projects (staging → `staging`, production → `main`), two
 Supabase projects (`nexus-staging`, `nexus-prod`) with all 3 migrations applied to both.
 
+**Day 3 started**: Notes — create, edit title/body shipped (1/11) — see below. `develop` is
+ahead of `staging`/`main` again as normal feature work resumes (Day 3 releases to staging only,
+not production, per `Roadmap.md`).
+
 ---
 
 ## Setup gate (before any code)
@@ -260,9 +264,26 @@ CLI commands don't default to prod.
   `.claude/docs/git-workflow.md`. Day 2 QA gate (`.claude/docs/qa-checklist.md`) still to run
   before that promotion.
 
-## Day 3 — Knowledge Management — release Wednesday (staging only) (0/11)
+## Day 3 — Knowledge Management — release Wednesday (staging only) (1/11)
 
-- [ ] Notes — create, edit title/body
+- [x] Notes — create, edit title/body — `app/api/items` (list/create) + `app/api/items/:id`
+  (get/update) against the existing `knowledge_items` table (type='note'); no new migration, RLS
+  already in place from Day 1. Scope deliberately narrow per user's choice: plain title + body
+  in a textarea, explicit Save button — no WYSIWYG/rich formatting/checklists/autosave/version
+  history yet (separate, later Day 3 lines below). Body lives in `knowledge_items.description`
+  (the shared free-text field per `Database_Schema.md` — there's no dedicated note-body column).
+  New `/collections/:id` detail view (with a "New Note" action) and `/items/:id` editor;
+  `CollectionCard`'s name now links into the detail page (previously collections had no way to
+  be opened at all). Self-review (code-reviewer subagent) caught a real cross-tenant gap, fixed:
+  `POST /api/items` originally trusted any well-formed `collection_id` UUID without checking it
+  belonged to the caller — RLS on `knowledge_items` only constrains the row being inserted, not
+  the referenced `collection_id`, so a user could otherwise attach a note to another user's (or
+  an already-trashed) collection just by guessing an id. Now verifies ownership first. 234/234
+  unit/integration tests green (42 new), typecheck clean, all 6 Playwright `@smoke` tests green
+  (new `e2e/notes.spec.ts`: create → edit title+body → Save → reload → confirms persistence).
+  RLS cross-user isolation confirmed live against PostgREST with two real accounts (not just
+  mocked): user B's token returns an empty result for user A's note id.
+- [ ] Notes — rich formatting (headings, bold/italic, lists, checklists, code blocks, tables, links, inline images)
 - [ ] Notes — rich formatting (headings, bold/italic, lists, checklists, code blocks, tables, links, inline images)
 - [ ] Notes — Markdown source / WYSIWYG toggle
 - [ ] Notes — autosave (debounced, save-status indicator, retry on failure)
