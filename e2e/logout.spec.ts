@@ -3,8 +3,8 @@ import { expect, test } from "@playwright/test";
 import { fetchConfirmationLink, followConfirmationLink } from "./helpers/mailpit";
 
 // Registers, verifies via the real Mailpit link (which signs the user in), confirms the
-// landing page reflects the signed-in state, then logs out.
-test("verified user sees the signed-in landing page and can log out @smoke", async ({ page }) => {
+// signed-in visitor lands on the Dashboard, then logs out.
+test("verified user is redirected to the Dashboard and can log out @smoke", async ({ page }) => {
   const uniqueEmail = `e2e-logout-${Date.now()}@example.com`;
 
   await page.goto("/register");
@@ -18,8 +18,11 @@ test("verified user sees the signed-in landing page and can log out @smoke", asy
   await followConfirmationLink(page, confirmationLink);
   await expect(page.getByText(/your email is verified/i)).toBeVisible();
 
+  // app/page.tsx redirects a signed-in visitor straight to /dashboard (App nav/Dashboard shell)
+  // instead of the old ad hoc "Signed in as {email}" block.
   await page.goto("/");
-  await expect(page.getByText(new RegExp(`signed in as ${uniqueEmail}`, "i"))).toBeVisible();
+  await expect(page).toHaveURL("/dashboard");
+  await expect(page.getByRole("button", { name: "Log out" })).toBeVisible();
 
   await page.getByRole("button", { name: "Log out" }).click();
   await expect(page).toHaveURL("/");
