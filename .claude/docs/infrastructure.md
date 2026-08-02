@@ -70,6 +70,12 @@ Auth, or Storage, run the **Supabase CLI's local stack** (`supabase start`, need
 instead of a bare Postgres container — this is the free, fast, resettable dev loop; see
 `SETUP_CHECKLIST.md` for why a third hosted Supabase project isn't needed.
 
+**Start/stop discipline:** `supabase start` does not auto-stop — the local stack (Postgres,
+Studio, Kong, Auth, Storage, etc., all suffixed `_nexus`) keeps running in Docker indefinitely
+once started, across sessions, until explicitly stopped. Run `supabase stop` at the end of each
+work session/day; run `supabase start` at the beginning of the next one. Don't leave it running
+idle overnight — it holds a Postgres instance and several sidecars in memory for no benefit.
+
 ## Monitoring
 
 - Vercel's function-invocation/duration/bandwidth dashboard.

@@ -79,7 +79,9 @@ docker compose down          # stop
 
 Use the Supabase CLI's local stack (`supabase start`, needs Docker) for anything touching RLS,
 Auth, or Storage — see `.claude/docs/infrastructure.md`. Don't run the app natively outside
-Docker beyond a quick syntax check.
+Docker beyond a quick syntax check. **`supabase start` doesn't auto-stop** — run
+`supabase stop` at the end of each work session and `supabase start` at the beginning of the
+next; don't leave the local stack running idle overnight.
 
 ## Common commands
 
