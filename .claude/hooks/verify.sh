@@ -9,15 +9,19 @@ cd "$CLAUDE_PROJECT_DIR" 2>/dev/null || cd "$(dirname "$0")/../.." || exit 0
 # Nothing to check until the app exists.
 [ -f package.json ] || exit 0
 
-# Prefer running inside Docker (matches the Linux runtime Vercel actually runs on —
-# see CLAUDE.md's "Local dev — Docker" section). Fall back to native npx if the
-# Docker stack isn't up, rather than blocking every turn on Docker being running.
+# Only run inside Docker (matches the Linux runtime Vercel actually runs on — see CLAUDE.md's
+# "Local dev — Docker" section, and its "don't run the app natively outside Docker" rule).
+# Skip entirely, rather than falling back to a native run, when the app container isn't up:
+# the host's node_modules is never guaranteed to match the container's (e.g. packages added via
+# `docker compose exec app npm install ...` only ever land in the container's own node_modules),
+# so a native fallback here produces false "Cannot find module" errors, not real signal — most
+# reliably right after `docker compose down` at the end of a session.
+if ! docker compose ps --status running 2>/dev/null | grep -q app; then
+  exit 0
+fi
+
 run() {
-  if docker compose ps --status running 2>/dev/null | grep -q app; then
-    docker compose exec -T app "$@"
-  else
-    "$@"
-  fi
+  docker compose exec -T app "$@"
 }
 
 # TypeScript strict must be clean.
