@@ -19,10 +19,10 @@ re-investigate only if it starts affecting Vercel too. `develop`/`staging`/`main
 Infra is now fully set up: two Vercel projects (staging → `staging`, production → `main`), two
 Supabase projects (`nexus-staging`, `nexus-prod`) with all 3 migrations applied to both.
 
-**Day 3 in progress (3/11)**: Notes — create/edit title+body, Notes — rich formatting, and Notes —
-Markdown source / WYSIWYG toggle all shipped — see below. `develop` is ahead of `staging`/`main`
-again as normal feature work resumes (Day 3 releases to staging only, not production, per
-`Roadmap.md`).
+**Day 3 in progress (4/11)**: Notes — create/edit title+body, Notes — rich formatting, Notes —
+Markdown source / WYSIWYG toggle, and Notes — autosave all shipped — see below. `develop` is
+ahead of `staging`/`main` again as normal feature work resumes (Day 3 releases to staging only,
+not production, per `Roadmap.md`).
 
 ---
 
@@ -265,7 +265,7 @@ CLI commands don't default to prod.
   `.claude/docs/git-workflow.md`. Day 2 QA gate (`.claude/docs/qa-checklist.md`) still to run
   before that promotion.
 
-## Day 3 — Knowledge Management — release Wednesday (staging only) (3/11)
+## Day 3 — Knowledge Management — release Wednesday (staging only) (4/11)
 
 - [x] Notes — create, edit title/body — `app/api/items` (list/create) + `app/api/items/:id`
   (get/update) against the existing `knowledge_items` table (type='note'); no new migration, RLS
@@ -331,7 +331,42 @@ CLI commands don't default to prod.
   persists it through a reload). Also manually driven live in the browser (Claude-in-Chrome
   against the local Supabase stack): created a note, used the toolbar to build a heading, bold
   text, and a checklist, saved, and confirmed the rendered view matched.
-- [ ] Notes — autosave (debounced, save-status indicator, retry on failure)
+- [x] Notes — autosave (debounced, save-status indicator, retry on failure) — replaces the
+  manual Save/Cancel click-to-save model with continuous autosave, per `Notes.md`'s Autosave/
+  Error States sections. New `components/notes/use-note-autosave.ts` hook: 1500ms debounce,
+  automatic retry with backoff (2s/5s/10s) on failure, `"saved" | "saving" | "retrying" |
+  "error"` status, a `resetBaseline` call (so loading a note doesn't itself look like an
+  unsaved change) and a `retryNow` escape hatch. `NoteEditor`'s "Save"/"Cancel" buttons are
+  replaced by a persistent status indicator (visible in both view and edit mode — shown once
+  there's something to say) plus a "Retry now" action once retries are exhausted, and a single
+  "Done" button (no discard concept anymore — everything autosaves). Conflict/version-mismatch
+  detection from `Notes.md`'s Error States section is explicitly out of scope here — it depends
+  on Version History, a separate not-yet-built line below; this is last-write-wins for now.
+  Self-review (code-reviewer subagent) caught two real bugs, both fixed: (1) a lost-update race
+  where `attemptSave`'s success handler stamped `lastSavedRef` from the live draft ref instead
+  of the snapshot actually sent, so a newer edit arriving while an older save was still in
+  flight could get silently marked already-saved and never autosave; (2) `NoteEditor` wasn't
+  keyed by item id (`app/(app)/items/[id]/page.tsx`), so navigating between two notes without a
+  remount could let a still-ticking autosave/retry timer for the previous note fire against —
+  and overwrite — a different note once its own data loaded; fixed via `key={id}`. Also fixed,
+  in the same pass: the status/retry indicator originally only rendered inside the edit-mode
+  branch, so leaving edit mode while a save was still retrying/failed made it invisible,
+  contradicting the spec's "persistent" indicator requirement — now shown in view mode too.
+  Also fixes a latent discard bug the autosave model surfaces: `startEditing()` used to reset
+  `title`/`body` from the last-fetched item every time Edit reopened, which would have silently
+  thrown away an unsaved edit stuck retrying — it no longer resets them. 288/288 unit/
+  integration tests green (19 new: 11 for `use-note-autosave.test.ts`, covering the debounce/
+  retry/backoff state machine with fake timers including a regression test for the lost-update
+  race above; 8 replacing the old Save/Cancel-based `note-editor.test.tsx` cases), typecheck
+  clean, all 6 Playwright `@smoke` tests green (`e2e/notes.spec.ts` updated to wait for the
+  debounced-autosave PATCH via `page.waitForResponse` instead of clicking a Save button that no
+  longer exists). Verified live in the browser (Claude-in-Chrome against the local Supabase
+  stack): typed into a note, watched the PATCH fire ~1.5s later with no Save click, reloaded to
+  confirm persistence. Also re-hit and confirmed (not newly introduced by this feature) the
+  known local Turbopack dev-server staleness issue from Day 1/2 — the running dev server kept
+  serving pre-change compiled output until `docker compose restart app` after a `.next` cache
+  clear; noted again here since it cost real debugging time before being recognized as the
+  same pre-existing environment quirk.
 - [ ] Notes — version history (view list, view a version, restore)
 - [ ] Notes — checklist items toggleable from rendered view
 - [ ] Shared item behavior — tag (create/rename/delete/merge), favorite, archive

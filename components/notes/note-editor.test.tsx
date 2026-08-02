@@ -1,10 +1,27 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { act, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { NoteEditor } from "./note-editor";
 
+// The Rich text surface's own parse/serialize/toolbar behavior is already covered by
+// note-rich-text-editor.test.tsx — here we only need to prove that whatever it reports via
+// onChange flows into the same autosave draft as the Markdown textarea does.
+vi.mock("@/components/notes/note-rich-text-editor", () => ({
+  NoteRichTextEditor: ({
+    content,
+    onChange,
+  }: {
+    content: string;
+    onChange: (value: string) => void;
+  }) => (
+    <button type="button" onClick={() => onChange(`${content} edited via rich text`)}>
+      Simulate rich text edit
+    </button>
+  ),
+}));
+
 function jsonResponse(body: unknown, ok = true) {
-  return { ok, json: async () => body };
+  return { ok, status: ok ? 200 : 500, json: async () => body };
 }
 
 const baseItem = {
@@ -14,17 +31,31 @@ const baseItem = {
   updated_at: "2026-08-01T00:00:00.000Z",
 };
 
+// Flushes pending promise microtasks (e.g. the initial GET's .then() chain) without depending
+// on real wall-clock time — safe to call whether or not fake timers are active for this test.
+async function flush() {
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(0);
+  });
+}
+
 describe("NoteEditor", () => {
   beforeEach(() => {
+    vi.useFakeTimers();
     vi.stubGlobal("fetch", vi.fn());
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it("opens in view mode, rendering the body instead of the textarea", async () => {
     (fetch as ReturnType<typeof vi.fn>).mockResolvedValue(jsonResponse(baseItem));
 
     render(<NoteEditor itemId="item-1" />);
+    await flush();
 
-    expect(await screen.findByRole("heading", { name: "Trip planning" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Trip planning" })).toBeInTheDocument();
     expect(screen.getByText("Packing list")).toBeInTheDocument();
     expect(screen.queryByLabelText("Title")).not.toBeInTheDocument();
     expect(fetch).toHaveBeenCalledWith("/api/items/item-1");
@@ -36,8 +67,9 @@ describe("NoteEditor", () => {
     );
 
     render(<NoteEditor itemId="item-1" />);
+    await flush();
 
-    expect(await screen.findByLabelText("Title")).toBeInTheDocument();
+    expect(screen.getByLabelText("Title")).toBeInTheDocument();
     expect(screen.getByLabelText("Body")).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Untitled Note" })).not.toBeInTheDocument();
   });
@@ -46,168 +78,176 @@ describe("NoteEditor", () => {
     (fetch as ReturnType<typeof vi.fn>).mockResolvedValue(jsonResponse(null, false));
 
     render(<NoteEditor itemId="item-1" />);
+    await flush();
 
-    expect(await screen.findByRole("alert")).toHaveTextContent(/couldn't be loaded/i);
+    expect(screen.getByRole("alert")).toHaveTextContent(/couldn't be loaded/i);
     expect(screen.queryByLabelText("Title")).not.toBeInTheDocument();
   });
 
-  it("clicking Edit switches to the textarea, pre-filled with the raw Markdown source", async () => {
+  it("clicking Edit switches to the form, pre-filled with the current title/body — no Save button anywhere", async () => {
     (fetch as ReturnType<typeof vi.fn>).mockResolvedValue(
       jsonResponse({ ...baseItem, description: "# Heading with **bold** text" }),
     );
 
     render(<NoteEditor itemId="item-1" />);
-    await screen.findByRole("heading", { name: "Trip planning" });
+    await flush();
 
     fireEvent.click(screen.getByRole("button", { name: /^edit$/i }));
 
     expect(screen.getByDisplayValue("Trip planning")).toBeInTheDocument();
     expect(screen.getByDisplayValue("# Heading with **bold** text")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^save$/i })).not.toBeInTheDocument();
   });
 
-  it("Save calls PATCH with the edited title/body and returns to view mode showing the update", async () => {
+  it("typing in the body triggers an autosave PATCH after the debounce, with no Save click", async () => {
     (fetch as ReturnType<typeof vi.fn>)
       .mockResolvedValueOnce(jsonResponse(baseItem))
-      .mockResolvedValueOnce(
-        jsonResponse({ ...baseItem, title: "Trip planning (updated)", description: "Updated packing list" }),
-      );
+      .mockResolvedValueOnce(jsonResponse({ ...baseItem, description: "Updated list" }));
 
     render(<NoteEditor itemId="item-1" />);
-    await screen.findByRole("heading", { name: "Trip planning" });
+    await flush();
     fireEvent.click(screen.getByRole("button", { name: /^edit$/i }));
 
-    fireEvent.change(screen.getByLabelText("Title"), {
-      target: { value: "Trip planning (updated)" },
+    fireEvent.change(screen.getByLabelText("Body"), { target: { value: "Updated list" } });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1500);
     });
-    fireEvent.change(screen.getByLabelText("Body"), { target: { value: "Updated packing list" } });
-    fireEvent.click(screen.getByRole("button", { name: /^save$/i }));
 
-    expect(
-      await screen.findByRole("heading", { name: "Trip planning (updated)" }),
-    ).toBeInTheDocument();
-    expect(screen.getByText("Updated packing list")).toBeInTheDocument();
     expect(fetch).toHaveBeenCalledWith(
       "/api/items/item-1",
       expect.objectContaining({
         method: "PATCH",
-        body: JSON.stringify({ title: "Trip planning (updated)", description: "Updated packing list" }),
+        body: JSON.stringify({ title: "Trip planning", description: "Updated list" }),
       }),
     );
   });
 
-  it("Cancel discards the draft and returns to view mode unchanged", async () => {
-    (fetch as ReturnType<typeof vi.fn>).mockResolvedValue(jsonResponse(baseItem));
+  it("the status indicator shows Saving… while in flight and disappears again once saved", async () => {
+    let resolvePatch!: (value: unknown) => void;
+    (fetch as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(jsonResponse(baseItem))
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolvePatch = resolve;
+        }),
+      );
 
     render(<NoteEditor itemId="item-1" />);
-    await screen.findByRole("heading", { name: "Trip planning" });
+    await flush();
     fireEvent.click(screen.getByRole("button", { name: /^edit$/i }));
 
-    fireEvent.change(screen.getByLabelText("Title"), { target: { value: "Discarded title" } });
-    fireEvent.click(screen.getByRole("button", { name: /^cancel$/i }));
+    fireEvent.change(screen.getByLabelText("Body"), { target: { value: "Updated list" } });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1500);
+    });
 
-    expect(screen.getByRole("heading", { name: "Trip planning" })).toBeInTheDocument();
-    expect(screen.queryByText("Discarded title")).not.toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("Saving…");
+
+    await act(async () => {
+      resolvePatch(jsonResponse({ ...baseItem, description: "Updated list" }));
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    // Only shown once there's something to say — a freshly-saved note stays quiet.
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
   });
 
-  it("shows an inline error for a blank title and never calls PATCH", async () => {
+  it("clearing the title shows an inline error, disables Done, and never triggers a PATCH", async () => {
     (fetch as ReturnType<typeof vi.fn>).mockResolvedValue(jsonResponse(baseItem));
 
     render(<NoteEditor itemId="item-1" />);
-    await screen.findByRole("heading", { name: "Trip planning" });
+    await flush();
     fireEvent.click(screen.getByRole("button", { name: /^edit$/i }));
     (fetch as ReturnType<typeof vi.fn>).mockClear();
 
     fireEvent.change(screen.getByLabelText("Title"), { target: { value: "   " } });
-    fireEvent.click(screen.getByRole("button", { name: /^save$/i }));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000);
+    });
 
-    expect(await screen.findByText("Title is required")).toBeInTheDocument();
+    expect(screen.getByText("Title is required")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^done$/i })).toBeDisabled();
     expect(fetch).not.toHaveBeenCalled();
   });
 
-  it("a failed save shows a generic retry-able error and stays in edit mode with the draft intact", async () => {
+  it("a failed autosave keeps the typed content and, once retries are exhausted, shows Not saved with a working Retry now", async () => {
     (fetch as ReturnType<typeof vi.fn>)
       .mockResolvedValueOnce(jsonResponse(baseItem))
-      .mockResolvedValueOnce(jsonResponse({ error: { message: "boom" } }, false));
+      .mockResolvedValue(jsonResponse({ error: { message: "boom" } }, false));
 
     render(<NoteEditor itemId="item-1" />);
-    await screen.findByRole("heading", { name: "Trip planning" });
+    await flush();
     fireEvent.click(screen.getByRole("button", { name: /^edit$/i }));
-    fireEvent.change(screen.getByLabelText("Title"), { target: { value: "Draft title" } });
 
-    fireEvent.click(screen.getByRole("button", { name: /^save$/i }));
+    fireEvent.change(screen.getByLabelText("Body"), { target: { value: "Draft content" } });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1500); // initial attempt
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000); // retry 1
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000); // retry 2
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10000); // retry 3 -> exhausted
+    });
 
-    expect(await screen.findByText("boom")).toBeInTheDocument();
-    expect(screen.getByDisplayValue("Draft title")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("Not saved");
+    expect(screen.getByDisplayValue("Draft content")).toBeInTheDocument();
+
+    (fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      jsonResponse({ ...baseItem, description: "Draft content" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /^retry now$/i }));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    // Only shown once there's something to say — a freshly-saved note stays quiet.
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
   });
 
-  it("defaults to the Markdown (textarea) surface when entering edit mode", async () => {
+  it("leaving edit mode (Done) and reopening it (Edit) preserves an in-progress draft instead of reverting to the last-synced value", async () => {
     (fetch as ReturnType<typeof vi.fn>).mockResolvedValue(jsonResponse(baseItem));
 
     render(<NoteEditor itemId="item-1" />);
-    await screen.findByRole("heading", { name: "Trip planning" });
+    await flush();
     fireEvent.click(screen.getByRole("button", { name: /^edit$/i }));
 
-    expect(screen.getByLabelText("Body").tagName).toBe("TEXTAREA");
-    expect(screen.getByRole("button", { name: "Markdown" })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
-  });
-
-  it("the toggle switches to the Rich text surface and shows the same content, parsed", async () => {
-    (fetch as ReturnType<typeof vi.fn>).mockResolvedValue(
-      jsonResponse({ ...baseItem, description: "# Heading\n\n**bold**" }),
-    );
-
-    render(<NoteEditor itemId="item-1" />);
-    await screen.findByRole("heading", { name: "Trip planning" });
+    fireEvent.change(screen.getByLabelText("Title"), { target: { value: "Still typing" } });
+    // Leave before the debounce fires — the draft is only in local state, not yet autosaved.
+    fireEvent.click(screen.getByRole("button", { name: /^done$/i }));
     fireEvent.click(screen.getByRole("button", { name: /^edit$/i }));
-    fireEvent.click(screen.getByRole("button", { name: "Rich text" }));
 
-    expect(await screen.findByRole("heading", { level: 1, name: "Heading" })).toBeInTheDocument();
-    expect(screen.getByText("bold").tagName).toBe("STRONG");
+    expect(screen.getByDisplayValue("Still typing")).toBeInTheDocument();
   });
 
-  it("toggling back to Markdown shows the same content, serialized back to equivalent Markdown text (not a stale snapshot)", async () => {
-    (fetch as ReturnType<typeof vi.fn>).mockResolvedValue(
-      jsonResponse({ ...baseItem, description: "# Heading\n\n**bold**" }),
-    );
-
-    render(<NoteEditor itemId="item-1" />);
-    await screen.findByRole("heading", { name: "Trip planning" });
-    fireEvent.click(screen.getByRole("button", { name: /^edit$/i }));
-    fireEvent.click(screen.getByRole("button", { name: "Rich text" }));
-    await screen.findByRole("heading", { level: 1, name: "Heading" });
-
-    fireEvent.click(screen.getByRole("button", { name: "Markdown" }));
-
-    const textarea = screen.getByLabelText("Body") as HTMLTextAreaElement;
-    expect(textarea.tagName).toBe("TEXTAREA");
-    expect(textarea.value).toContain("# Heading");
-    expect(textarea.value).toContain("**bold**");
-  });
-
-  it("Save works correctly while the Rich text surface is active", async () => {
+  it("editing via the Rich text surface also drives the autosave cycle", async () => {
     (fetch as ReturnType<typeof vi.fn>)
-      .mockResolvedValueOnce(jsonResponse({ ...baseItem, description: "Packing list" }))
+      .mockResolvedValueOnce(jsonResponse(baseItem))
       .mockResolvedValueOnce(
-        jsonResponse({ ...baseItem, title: "Trip planning", description: "Packing list" }),
+        jsonResponse({ ...baseItem, description: "Packing list edited via rich text" }),
       );
 
     render(<NoteEditor itemId="item-1" />);
-    await screen.findByRole("heading", { name: "Trip planning" });
+    await flush();
     fireEvent.click(screen.getByRole("button", { name: /^edit$/i }));
     fireEvent.click(screen.getByRole("button", { name: "Rich text" }));
-    await waitFor(() => expect(screen.getByLabelText("Body").tagName).not.toBe("TEXTAREA"));
 
-    fireEvent.click(screen.getByRole("button", { name: /^save$/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Simulate rich text edit" }));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1500);
+    });
 
-    await screen.findByRole("heading", { name: "Trip planning" });
     expect(fetch).toHaveBeenCalledWith(
       "/api/items/item-1",
       expect.objectContaining({
         method: "PATCH",
-        body: JSON.stringify({ title: "Trip planning", description: "Packing list" }),
+        body: JSON.stringify({
+          title: "Trip planning",
+          description: "Packing list edited via rich text",
+        }),
       }),
     );
   });

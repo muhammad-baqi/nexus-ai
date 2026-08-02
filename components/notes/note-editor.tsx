@@ -8,9 +8,17 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { NoteBody } from "@/components/notes/note-body";
 import { NoteRichTextEditor } from "@/components/notes/note-rich-text-editor";
+import { type AutosaveStatus, useNoteAutosave } from "@/components/notes/use-note-autosave";
 import { DEFAULT_NOTE_TITLE } from "@/lib/validation/items";
 
 type EditSurface = "markdown" | "richtext";
+
+const STATUS_LABEL: Record<AutosaveStatus, string> = {
+  saving: "Saving…",
+  saved: "Saved",
+  retrying: "Not saved — retrying…",
+  error: "Not saved",
+};
 
 type Item = {
   id: string;
@@ -35,9 +43,30 @@ export function NoteEditor({ itemId }: Props) {
   const [editSurface, setEditSurface] = useState<EditSurface>("markdown");
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
-  const [titleError, setTitleError] = useState<string | undefined>();
-  const [saveError, setSaveError] = useState<string | undefined>();
-  const [isSaving, setIsSaving] = useState(false);
+
+  const { status, retryNow, resetBaseline } = useNoteAutosave(
+    { title, body },
+    !!item && title.trim().length > 0,
+    async (draft) => {
+      const response = await fetch(`/api/items/${itemId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: draft.title.trim(), description: draft.body }),
+      });
+
+      if (!response.ok) {
+        console.error(
+          "[NoteEditor] autosave failed:",
+          response.status,
+          await parseErrorMessage(response, "unknown error"),
+        );
+        throw new Error("autosave failed");
+      }
+
+      const updated: Item = await response.json();
+      setItem(updated);
+    },
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -48,6 +77,7 @@ export function NoteEditor({ itemId }: Props) {
         setItem(data);
         setTitle(data.title);
         setBody(data.description ?? "");
+        resetBaseline({ title: data.title, body: data.description ?? "" });
         // A just-created note (still the server-assigned default title, no body yet) has
         // nothing to show in view mode — open straight into editing instead of forcing an
         // extra "Edit" click before the user can type anything (CLAUDE.md: save in <10s).
@@ -60,48 +90,19 @@ export function NoteEditor({ itemId }: Props) {
     return () => {
       cancelled = true;
     };
+    // resetBaseline is stable (useCallback with an empty dep array in useNoteAutosave) —
+    // omitted to keep this effect scoped to itemId, matching its cleanup semantics.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [itemId]);
 
   function startEditing() {
-    if (!item) return;
-    setTitle(item.title);
-    setBody(item.description ?? "");
-    setTitleError(undefined);
-    setSaveError(undefined);
+    // title/body already hold the live draft (autosaved or mid-retry) — resetting them from
+    // `item` here would silently discard an unsaved edit if a save is stuck retrying.
     setEditSurface("markdown");
     setMode("edit");
   }
 
-  function cancelEditing() {
-    setTitleError(undefined);
-    setSaveError(undefined);
-    setMode("view");
-  }
-
-  async function handleSave() {
-    if (!title.trim()) {
-      setTitleError("Title is required");
-      return;
-    }
-    setTitleError(undefined);
-    setSaveError(undefined);
-    setIsSaving(true);
-
-    const response = await fetch(`/api/items/${itemId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title: title.trim(), description: body }),
-    });
-
-    setIsSaving(false);
-
-    if (!response.ok) {
-      setSaveError(await parseErrorMessage(response, "Something went wrong saving this note."));
-      return;
-    }
-
-    const updated: Item = await response.json();
-    setItem(updated);
+  function finishEditing() {
     setMode("view");
   }
 
@@ -117,7 +118,25 @@ export function NoteEditor({ itemId }: Props) {
     return <p className="text-muted-foreground text-sm">Loading…</p>;
   }
 
+  // Rendered in both view and edit mode — Notes.md requires a *persistent* "not saved"
+  // indicator, so leaving edit mode (Done) can't make a still-retrying/failed save vanish from
+  // view. Only shown once there's something to say (a fresh "saved" note stays quiet).
+  const statusIndicator = status !== "saved" && (
+    <div className="flex items-center gap-2">
+      <p className="text-muted-foreground text-sm" role="status" aria-live="polite">
+        {STATUS_LABEL[status]}
+      </p>
+      {status === "error" && (
+        <Button type="button" variant="outline" size="sm" onClick={retryNow}>
+          Retry now
+        </Button>
+      )}
+    </div>
+  );
+
   if (mode === "edit") {
+    const titleError = !title.trim() ? "Title is required" : undefined;
+
     return (
       <div className="flex flex-col gap-4">
         <div className="flex flex-col gap-1.5">
@@ -169,17 +188,10 @@ export function NoteEditor({ itemId }: Props) {
             <NoteRichTextEditor content={body} onChange={setBody} />
           )}
         </div>
-        {saveError && (
-          <p className="text-destructive text-sm" role="alert">
-            {saveError}
-          </p>
-        )}
+        {statusIndicator}
         <div className="flex items-center gap-2">
-          <Button type="button" onClick={handleSave} disabled={isSaving}>
-            {isSaving ? "Saving..." : "Save"}
-          </Button>
-          <Button type="button" variant="outline" onClick={cancelEditing} disabled={isSaving}>
-            Cancel
+          <Button type="button" variant="outline" onClick={finishEditing} disabled={!!titleError}>
+            Done
           </Button>
         </div>
       </div>
@@ -194,6 +206,7 @@ export function NoteEditor({ itemId }: Props) {
           Edit
         </Button>
       </div>
+      {statusIndicator}
       <NoteBody content={item.description ?? ""} />
     </div>
   );

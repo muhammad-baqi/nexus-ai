@@ -100,9 +100,12 @@ leave them as a style reference; either is fine.)*
 - [x] `PATCH /api/items/:id` returns 404 (`not_found`) on a nonexistent/foreign id
 - [x] `NoteEditor` loads the item and shows it (superseded by the rich-formatting feature below —
   now a rendered view by default, not the raw form fields)
-- [x] `NoteEditor`'s Save button calls `PATCH` with the edited title/body
-- [x] `NoteEditor` shows an inline error for a blank title and never calls `PATCH`
-- [x] `NoteEditor` shows a generic retry-able error when the save request fails
+- [x] `NoteEditor`'s Save button calls `PATCH` with the edited title/body (superseded by Notes —
+  autosave below — there's no Save button anymore, PATCH now fires via debounced autosave)
+- [x] `NoteEditor` shows an inline error for a blank title and never calls `PATCH` (still true
+  under autosave — see Notes — autosave below)
+- [x] `NoteEditor` shows a generic retry-able error when the save request fails (superseded by
+  Notes — autosave below — replaced by the automatic-retry-with-backoff + persistent indicator)
 - [x] `CollectionDetailView`'s "New Note" button POSTs with the current `collection_id` and navigates to the created item's editor page
 - [x] `CollectionDetailView` lists existing notes, falling back to "Untitled Note" for a blank title
 - [x] (Playwright `@smoke`) Register, open the default Inbox collection, create a note, edit title + body, Save, reload the page, confirm both persisted (superseded — this scenario is now folded into the extended `e2e/notes.spec.ts` test under the rich-formatting heading below, which also covers formatting).
@@ -121,9 +124,12 @@ leave them as a style reference; either is fine.)*
 - [x] `NoteEditor` opens in view mode (rendered body), not the raw textarea — for a note that already has content
 - [x] `NoteEditor` opens straight into edit mode for a freshly created note (default title, empty body) — self-review caught that always defaulting to view mode added a mandatory extra click before a brand-new note could be typed into at all, against the "save in under 10s" promise
 - [x] `NoteEditor`'s "Edit" button switches to the textarea, pre-filled with the raw Markdown source
-- [x] `NoteEditor`'s Save returns to view mode showing the newly rendered content
+- [x] `NoteEditor`'s Save returns to view mode showing the newly rendered content (superseded by
+  Notes — autosave below — "Save" is now "Done", and doesn't imply a save just happened)
 - [x] `NoteEditor`'s "Cancel" button discards the draft and returns to view mode unchanged
-- [x] `NoteEditor` stays in edit mode with the draft intact when a save fails, showing the inline error (refined from the original plan's "click Edit again" framing — matches `CollectionCard`'s existing edit-form pattern of not auto-exiting on error)
+  (superseded by Notes — autosave below — there's no discard concept anymore; "Done" replaces
+  "Cancel" and never reverts unsaved content)
+- [x] `NoteEditor` stays in edit mode with the draft intact when a save fails, showing the inline error (refined from the original plan's "click Edit again" framing — matches `CollectionCard`'s existing edit-form pattern of not auto-exiting on error) (superseded by Notes — autosave below)
 - [x] (Playwright `@smoke`, `e2e/notes.spec.ts` extended/renamed) Creating a note (lands in edit mode immediately), saving a body with a heading, bold text, and a checklist item renders real `<h1>`/`<strong>`/checkbox elements — both immediately after Save and again after a full page reload, not raw Markdown syntax; Edit still shows the raw source afterward.
 
 ## Notes — Markdown source / WYSIWYG toggle (Day 3)
@@ -138,5 +144,25 @@ leave them as a style reference; either is fine.)*
 - [x] `NoteEditor` defaults to the Markdown (textarea) surface when entering edit mode, unchanged from before
 - [x] `NoteEditor`'s toggle switches from Markdown to Rich text and shows the same content, parsed
 - [x] `NoteEditor`'s toggle switches from Rich text back to Markdown and shows the same content, serialized back to the original Markdown text (not a stale/reverted snapshot) — the mount/unmount sync round-trip
-- [x] `NoteEditor`'s Save button works correctly when the last edit happened in Rich text mode (proves the continuous `onUpdate → setBody` sync while mounted, not just the toggle-boundary mount/unmount sync)
+- [x] `NoteEditor`'s Save button works correctly when the last edit happened in Rich text mode (proves the continuous `onUpdate → setBody` sync while mounted, not just the toggle-boundary mount/unmount sync) (superseded by Notes — autosave below — no Save button anymore; see its "Rich text surface also drives autosave" case)
 - [x] (Playwright `@smoke`, `e2e/notes.spec.ts` extended) Create a note, switch to Rich text, use the toolbar to add a heading and bold text, switch back to Markdown and confirm the raw syntax is present, Save, reload, confirm the rendered view (`NoteBody`) shows real elements for both.
+
+## Notes — autosave (Day 3)
+- [x] `useNoteAutosave` does not call `save` immediately on a draft change — waits out the 1500ms debounce
+- [x] `useNoteAutosave` collapses rapid successive changes within the debounce window into a single `save` call
+- [x] `useNoteAutosave` status goes `saving` → `saved` on a successful save
+- [x] `useNoteAutosave` never schedules a save while `enabled` is false, even when the draft changes
+- [x] `useNoteAutosave`'s `resetBaseline` marks the current draft as already-saved, so an unchanged draft never triggers a save (regression case for the "loading a note looks like an unsaved change" bug this call avoids)
+- [x] `useNoteAutosave`: a failed save schedules an automatic retry with backoff; status is `retrying` meanwhile
+- [x] `useNoteAutosave`: after exhausting all configured retries, status becomes `error` and auto-retrying stops
+- [x] `useNoteAutosave`'s `retryNow()` re-attempts immediately from `error`; success returns status to `saved`
+- [x] `useNoteAutosave`: a new edit arriving while a retry is pending/in-flight still autosaves once its own save settles — the newer draft is not silently marked "already saved" just because an older in-flight request resolved (self-review-caught race: `lastSavedRef` must be stamped with the draft that was actually sent, not whatever the live ref points at by the time the request resolves)
+- [x] `useNoteAutosave`: pending timers are cleared on unmount (no post-unmount `setState`)
+- [x] `NoteEditor`: typing in the title or body triggers an autosave PATCH after the debounce — no Save button present anywhere in edit mode
+- [x] `NoteEditor`: the status indicator shows "Saving…" while in flight and "Saved" once it completes
+- [x] `NoteEditor`: clearing the title shows "Title is required", disables "Done", and never triggers a PATCH
+- [x] `NoteEditor`: a failed autosave leaves the typed content in the fields (nothing discarded) and, once retries are exhausted, shows "Not saved" with a working "Retry now" action
+- [x] `NoteEditor`: the "Not saved"/"Retry now" indicator stays visible after leaving edit mode (Done) — self-review-caught gap: it previously only rendered inside the edit-mode branch, so a still-failing save became invisible the moment the user left edit mode, contradicting Notes.md's "persistent... indicator" requirement
+- [x] `NoteEditor`: leaving edit mode (Done) and reopening it (Edit) preserves an in-progress draft instead of reverting to the last-synced server value (regression test for the `startEditing` discard-bug fix)
+- [x] `NoteEditor`: editing via the Rich text surface also drives the same autosave cycle as Markdown
+- [x] (Playwright `@smoke`, `e2e/notes.spec.ts`) Create a note, type a title/body, wait for the debounced autosave (no Save click), reload, confirm the content persisted.

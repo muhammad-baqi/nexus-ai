@@ -2,13 +2,22 @@ import { expect, test } from "@playwright/test";
 
 import { fetchConfirmationLink, followConfirmationLink } from "./helpers/mailpit";
 
+// Waits for the debounced-autosave PATCH to actually round-trip, rather than an arbitrary
+// sleep — the caller must set this up *before* the action that edits the field (autosave fires
+// ~1.5s after the last keystroke, not on the keystroke itself).
+function waitForAutosave(page: import("@playwright/test").Page) {
+  return page.waitForResponse(
+    (res) => res.url().includes("/api/items/") && res.request().method() === "PATCH",
+  );
+}
+
 // Registers and verifies a fresh account, opens the default "Inbox" collection, creates a Note,
-// edits its title/body with a mix of the rich-formatting content types, saves, then reloads the
-// page to confirm both the raw content and its rendering persist through a real round-trip
-// against the local Supabase stack (not just optimistic client state). Also exercises the
-// Markdown/Rich text toggle: authors new content via the WYSIWYG toolbar, confirms it round-trips
-// to real Markdown syntax when switched back, and that it saves/persists identically to
-// hand-typed Markdown.
+// edits its title/body with a mix of the rich-formatting content types, waits for autosave (no
+// Save button — Notes.md's autosave feature removed it), then reloads the page to confirm both
+// the raw content and its rendering persist through a real round-trip against the local Supabase
+// stack (not just optimistic client state). Also exercises the Markdown/Rich text toggle:
+// authors new content via the WYSIWYG toolbar, confirms it round-trips to real Markdown syntax
+// when switched back, and that it autosaves/persists identically to hand-typed Markdown.
 test("create a note, edit title and body, and confirm formatting persists and renders @smoke", async ({
   page,
 }) => {
@@ -34,15 +43,17 @@ test("create a note, edit title and body, and confirm formatting persists and re
 
   // A freshly created note (default title, empty body) opens straight into edit mode — no
   // separate "Edit" click needed before the user can start typing.
+  let patched = waitForAutosave(page);
   await page.getByLabel("Title").fill("Trip planning");
   await page
     .getByLabel("Body")
     .fill(
       "# Details\n\n**Don't forget** the passport.\n\n- [x] Book flights\n- [ ] Pack bag",
     );
-  await page.getByRole("button", { name: "Save" }).click();
+  await patched; // no Save button — autosave persists this automatically
+  await page.getByRole("button", { name: "Done" }).click();
 
-  // Save returns to the rendered view — real elements, not raw Markdown syntax.
+  // Done returns to the rendered view — real elements, not raw Markdown syntax.
   await expect(page.getByRole("heading", { name: "Trip planning", level: 1 })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Details" })).toBeVisible();
   await expect(page.locator("strong", { hasText: "Don't forget" })).toBeVisible();
@@ -65,6 +76,9 @@ test("create a note, edit title and body, and confirm formatting persists and re
   await expect(page.getByRole("heading", { level: 1, name: "Details" })).toBeVisible();
 
   // Add a new heading and bold text via the WYSIWYG toolbar (not typed Markdown syntax).
+  // Set up the autosave wait *before* these edits — autosave fires ~1.5s after the last
+  // keystroke, which can easily land before the toggle-back click below.
+  patched = waitForAutosave(page);
   await page.locator(".ProseMirror").click();
   await page.keyboard.press("Control+End");
   await page.keyboard.press("Enter");
@@ -73,15 +87,16 @@ test("create a note, edit title and body, and confirm formatting persists and re
   await page.keyboard.press("Enter");
   await page.getByRole("button", { name: "Bold" }).click();
   await page.keyboard.type("Extra emphasis");
+  await patched; // toolbar-authored edit also autosaves — no Save button
 
   // Switching back to Markdown shows the toolbar-authored content as real Markdown syntax.
   await page.getByRole("button", { name: "Markdown" }).click();
   await expect(page.getByLabel("Body")).toHaveValue(/## New Section/);
   await expect(page.getByLabel("Body")).toHaveValue(/\*\*Extra emphasis\*\*/);
 
-  await page.getByRole("button", { name: /^save$/i }).click();
+  await page.getByRole("button", { name: "Done" }).click();
 
-  // Save renders both the original content and the toolbar-authored content as real elements.
+  // Done renders both the original content and the toolbar-authored content as real elements.
   await expect(page.getByRole("heading", { name: "Details" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "New Section" })).toBeVisible();
   await expect(page.locator("strong", { hasText: "Extra emphasis" })).toBeVisible();
