@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { NoteBody } from "@/components/notes/note-body";
 import { NoteRichTextEditor } from "@/components/notes/note-rich-text-editor";
+import { NoteVersionHistory } from "@/components/notes/note-version-history";
 import { type AutosaveStatus, useNoteAutosave } from "@/components/notes/use-note-autosave";
 import { DEFAULT_NOTE_TITLE } from "@/lib/validation/items";
 
@@ -43,15 +44,34 @@ export function NoteEditor({ itemId }: Props) {
   const [editSurface, setEditSurface] = useState<EditSurface>("markdown");
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
+  const [historyOpen, setHistoryOpen] = useState(false);
+
+  // The note_versions row the *next* autosave should coalesce into — null means "open a new
+  // boundary instead" (a fresh Edit session, or the previous write's version-bookkeeping
+  // failed and there's nothing safe to coalesce into). Deliberately an explicit id round-tripped
+  // through each PATCH response rather than re-derived server-side from "whichever row is
+  // newest" — self-review found that inferring "latest" could silently coalesce into, and
+  // corrupt, an unrelated older version whenever a boundary-opening write's insert had failed.
+  const openVersionIdRef = useRef<string | null>(null);
+  // Bumped whenever a restore happens, so a stale autosave response that was already in flight
+  // *before* the restore can't clobber the now-current state when it resolves afterward (the
+  // PATCH itself still completes normally server-side — this only guards this component's own
+  // local state from regressing).
+  const saveGenerationRef = useRef(0);
 
   const { status, retryNow, resetBaseline } = useNoteAutosave(
     { title, body },
     !!item && title.trim().length > 0,
     async (draft) => {
+      const generation = saveGenerationRef.current;
       const response = await fetch(`/api/items/${itemId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title: draft.title.trim(), description: draft.body }),
+        body: JSON.stringify({
+          title: draft.title.trim(),
+          description: draft.body,
+          openVersionId: openVersionIdRef.current,
+        }),
       });
 
       if (!response.ok) {
@@ -63,8 +83,14 @@ export function NoteEditor({ itemId }: Props) {
         throw new Error("autosave failed");
       }
 
-      const updated: Item = await response.json();
+      const updated: Item & { versionId: string | null } = await response.json();
+      if (saveGenerationRef.current !== generation) {
+        // A restore landed while this request was in flight — it already reflects newer state
+        // than this (now-stale) response does; don't let it overwrite that.
+        return;
+      }
       setItem(updated);
+      openVersionIdRef.current = updated.versionId;
     },
   );
 
@@ -99,11 +125,23 @@ export function NoteEditor({ itemId }: Props) {
     // title/body already hold the live draft (autosaved or mid-retry) — resetting them from
     // `item` here would silently discard an unsaved edit if a save is stuck retrying.
     setEditSurface("markdown");
+    openVersionIdRef.current = null;
     setMode("edit");
   }
 
   function finishEditing() {
     setMode("view");
+  }
+
+  function handleRestored(content: string, versionId: string | null) {
+    saveGenerationRef.current += 1;
+    setBody(content);
+    setItem((prev) => (prev ? { ...prev, description: content } : prev));
+    openVersionIdRef.current = versionId;
+    // The restore endpoint already persisted this — resetBaseline stops the autosave hook from
+    // treating it as a new unsaved edit and firing a redundant PATCH for content that's already
+    // saved server-side.
+    resetBaseline({ title, body: content });
   }
 
   if (loadError) {
@@ -193,7 +231,16 @@ export function NoteEditor({ itemId }: Props) {
           <Button type="button" variant="outline" onClick={finishEditing} disabled={!!titleError}>
             Done
           </Button>
+          <Button
+            type="button"
+            variant="outline"
+            aria-pressed={historyOpen}
+            onClick={() => setHistoryOpen((open) => !open)}
+          >
+            History
+          </Button>
         </div>
+        {historyOpen && <NoteVersionHistory itemId={itemId} onRestored={handleRestored} />}
       </div>
     );
   }
@@ -202,11 +249,23 @@ export function NoteEditor({ itemId }: Props) {
     <div className="flex flex-col gap-4">
       <div className="flex items-start justify-between gap-4">
         <h1 className="text-2xl font-semibold">{item.title}</h1>
-        <Button type="button" variant="outline" size="sm" onClick={startEditing}>
-          Edit
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button type="button" variant="outline" size="sm" onClick={startEditing}>
+            Edit
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            aria-pressed={historyOpen}
+            onClick={() => setHistoryOpen((open) => !open)}
+          >
+            History
+          </Button>
+        </div>
       </div>
       {statusIndicator}
+      {historyOpen && <NoteVersionHistory itemId={itemId} onRestored={handleRestored} />}
       <NoteBody content={item.description ?? ""} />
     </div>
   );

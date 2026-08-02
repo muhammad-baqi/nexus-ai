@@ -6,39 +6,41 @@ const VALID_ID = "123e4567-e89b-12d3-a456-426614174000";
 
 type ResolvedValue = { data: unknown; error: unknown };
 
-interface QueryBuilder {
-  select: ReturnType<typeof vi.fn>;
-  update: ReturnType<typeof vi.fn>;
-  eq: ReturnType<typeof vi.fn>;
-  is: ReturnType<typeof vi.fn>;
-  single: ReturnType<typeof vi.fn>;
-  resolveWith: (value: ResolvedValue) => QueryBuilder;
-  then: (resolve: (value: ResolvedValue) => void) => void;
+// A per-table FIFO queue: each test queues exactly the responses it expects the handler to
+// consume, in the order the handler's own Supabase calls will consume them (e.g. a preliminary
+// SELECT before the main UPDATE). This replaced a single shared query-builder/response pair that
+// couldn't distinguish knowledge_items calls from note_versions calls, or a first call from a
+// second call to the same table — needed once the PATCH handler started making more than one
+// Supabase call per request.
+let queues: Record<string, ResolvedValue[]>;
+let fromCalls: Record<string, number>;
+
+function queueResponse(table: string, value: ResolvedValue) {
+  (queues[table] ??= []).push(value);
 }
 
-function createQueryBuilder(): QueryBuilder {
-  let resolvedValue: ResolvedValue = { data: null, error: null };
-  const builder: QueryBuilder = {
-    select: vi.fn(() => builder),
-    update: vi.fn(() => builder),
-    eq: vi.fn(() => builder),
-    is: vi.fn(() => builder),
-    single: vi.fn(() => builder),
-    resolveWith: (value) => {
-      resolvedValue = value;
-      return builder;
-    },
-    then: (resolve) => resolve(resolvedValue),
+function createQueryBuilder(table: string) {
+  const builder: Record<string, unknown> = {};
+  const chainable = ["select", "update", "insert", "eq", "is", "order", "limit"];
+  for (const method of chainable) {
+    builder[method] = vi.fn(() => builder);
+  }
+  builder.single = vi.fn(() => builder);
+  builder.maybeSingle = vi.fn(() => builder);
+  builder.then = (resolve: (value: ResolvedValue) => void) => {
+    const queue = queues[table];
+    resolve(queue && queue.length > 0 ? queue.shift()! : { data: null, error: null });
   };
   return builder;
 }
 
-let queryBuilder: ReturnType<typeof createQueryBuilder>;
-
 vi.mock("@/lib/supabase/server", () => ({
   createClient: async () => ({
     auth: { getUser },
-    from: () => queryBuilder,
+    from: (table: string) => {
+      fromCalls[table] = (fromCalls[table] ?? 0) + 1;
+      return createQueryBuilder(table);
+    },
   }),
 }));
 
@@ -57,7 +59,8 @@ const invalidParams = Promise.resolve({ id: "not-a-uuid" });
 describe("GET /api/items/:id", () => {
   beforeEach(() => {
     getUser.mockReset();
-    queryBuilder = createQueryBuilder();
+    queues = {};
+    fromCalls = {};
   });
 
   it("returns 400 for a malformed id without touching the database", async () => {
@@ -77,7 +80,7 @@ describe("GET /api/items/:id", () => {
 
   it("returns 404 when the item doesn't exist, isn't owned, or is trashed", async () => {
     getUser.mockResolvedValue({ data: { user: { id: "user-1" } } });
-    queryBuilder.resolveWith({ data: null, error: { code: "PGRST116" } });
+    queueResponse("knowledge_items", { data: null, error: { code: "PGRST116" } });
 
     const response = await GET(requestFor("GET"), { params });
 
@@ -86,7 +89,7 @@ describe("GET /api/items/:id", () => {
 
   it("returns the item on success", async () => {
     getUser.mockResolvedValue({ data: { user: { id: "user-1" } } });
-    queryBuilder.resolveWith({
+    queueResponse("knowledge_items", {
       data: { id: VALID_ID, title: "Trip planning", description: "Packing list" },
       error: null,
     });
@@ -104,7 +107,9 @@ describe("GET /api/items/:id", () => {
 describe("PATCH /api/items/:id", () => {
   beforeEach(() => {
     getUser.mockReset();
-    queryBuilder = createQueryBuilder();
+    queues = {};
+    fromCalls = {};
+    getUser.mockResolvedValue({ data: { user: { id: "user-1" } } });
   });
 
   it("returns 400 for a malformed id without touching the database", async () => {
@@ -118,6 +123,12 @@ describe("PATCH /api/items/:id", () => {
 
   it("returns 400 for a completely empty body", async () => {
     const response = await PATCH(requestFor("PATCH", {}), { params });
+
+    expect(response.status).toBe(400);
+  });
+
+  it("returns 400 for a body containing only openVersionId (no real field)", async () => {
+    const response = await PATCH(requestFor("PATCH", { openVersionId: null }), { params });
 
     expect(response.status).toBe(400);
   });
@@ -137,42 +148,145 @@ describe("PATCH /api/items/:id", () => {
   });
 
   it("returns 404 when the row doesn't exist / isn't owned", async () => {
-    getUser.mockResolvedValue({ data: { user: { id: "user-1" } } });
-    queryBuilder.resolveWith({ data: null, error: { code: "PGRST116" } });
+    queueResponse("knowledge_items", { data: null, error: { code: "PGRST116" } });
 
     const response = await PATCH(requestFor("PATCH", { title: "Trip" }), { params });
 
     expect(response.status).toBe(404);
   });
 
-  it("updates and returns the item on success", async () => {
-    getUser.mockResolvedValue({ data: { user: { id: "user-1" } } });
-    queryBuilder.resolveWith({
-      data: { id: VALID_ID, title: "Trip planning", description: "Updated body" },
+  it("updates and returns the item (title only — no description, no version bookkeeping) on success", async () => {
+    queueResponse("knowledge_items", {
+      data: { id: VALID_ID, title: "Trip planning", description: "Untouched" },
       error: null,
     });
 
-    const response = await PATCH(
-      requestFor("PATCH", { title: "Trip planning", description: "Updated body" }),
-      { params },
-    );
+    const response = await PATCH(requestFor("PATCH", { title: "Trip planning" }), { params });
 
     expect(await response.json()).toEqual({
       id: VALID_ID,
       title: "Trip planning",
-      description: "Updated body",
+      description: "Untouched",
+      versionId: null,
     });
+    expect(fromCalls.note_versions).toBeUndefined();
   });
 
   it("returns 500 and logs on an update failure", async () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
-    getUser.mockResolvedValue({ data: { user: { id: "user-1" } } });
-    queryBuilder.resolveWith({ data: null, error: { message: "boom" } });
+    queueResponse("knowledge_items", { data: null, error: { message: "boom" } });
 
     const response = await PATCH(requestFor("PATCH", { title: "Trip" }), { params });
 
     expect(response.status).toBe(500);
     expect(consoleError).toHaveBeenCalled();
     consoleError.mockRestore();
+  });
+
+  describe("version-history bookkeeping (description changes on a note)", () => {
+    function queuePriorState(description: string, type = "note") {
+      queueResponse("knowledge_items", { data: { description, type }, error: null });
+    }
+
+    function queueMainUpdate(description: string) {
+      queueResponse("knowledge_items", {
+        data: { id: VALID_ID, title: "Trip planning", description },
+        error: null,
+      });
+    }
+
+    it("openVersionId omitted inserts a new version row", async () => {
+      queuePriorState("Old body");
+      queueMainUpdate("New body");
+      queueResponse("note_versions", { data: { id: "11111111-1111-1111-a111-111111111111" }, error: null });
+
+      const response = await PATCH(
+        requestFor("PATCH", { title: "Trip planning", description: "New body" }),
+        { params },
+      );
+
+      expect(await response.json()).toMatchObject({ versionId: "11111111-1111-1111-a111-111111111111" });
+    });
+
+    it("openVersionId provided and matching an existing row updates it in place (coalesce)", async () => {
+      queuePriorState("Old body");
+      queueMainUpdate("Newer body");
+      // The UPDATE-by-id attempt finds a match — no INSERT should ever be queued/needed.
+      queueResponse("note_versions", { data: { id: "11111111-1111-1111-a111-111111111111" }, error: null });
+
+      const response = await PATCH(
+        requestFor("PATCH", {
+          title: "Trip planning",
+          description: "Newer body",
+          openVersionId: "11111111-1111-1111-a111-111111111111",
+        }),
+        { params },
+      );
+
+      expect(await response.json()).toMatchObject({ versionId: "11111111-1111-1111-a111-111111111111" });
+      expect(fromCalls.note_versions).toBe(1);
+    });
+
+    it("an openVersionId that doesn't match any row for this item falls back to inserting a new one", async () => {
+      queuePriorState("Old body");
+      queueMainUpdate("Newer body");
+      queueResponse("note_versions", { data: null, error: null }); // UPDATE-by-id: no match
+      queueResponse("note_versions", { data: { id: "version-2" }, error: null }); // fallback INSERT
+
+      const response = await PATCH(
+        requestFor("PATCH", {
+          title: "Trip planning",
+          description: "Newer body",
+          openVersionId: "22222222-2222-2222-a222-222222222222",
+        }),
+        { params },
+      );
+
+      expect(await response.json()).toMatchObject({ versionId: "version-2" });
+      expect(fromCalls.note_versions).toBe(2);
+    });
+
+    it("a PATCH whose description is unchanged from the stored value doesn't write a version", async () => {
+      queuePriorState("Same body");
+      queueMainUpdate("Same body");
+
+      const response = await PATCH(
+        requestFor("PATCH", { title: "Trip planning", description: "Same body" }),
+        { params },
+      );
+
+      expect(await response.json()).toMatchObject({ versionId: null });
+      expect(fromCalls.note_versions).toBeUndefined();
+    });
+
+    it("version-write logic is skipped for non-note item types", async () => {
+      queuePriorState("Old body", "website");
+      queueMainUpdate("New body");
+
+      const response = await PATCH(
+        requestFor("PATCH", { title: "Trip planning", description: "New body" }),
+        { params },
+      );
+
+      expect(await response.json()).toMatchObject({ versionId: null });
+      expect(fromCalls.note_versions).toBeUndefined();
+    });
+
+    it("a version-write failure still returns 200 with the updated item", async () => {
+      const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+      queuePriorState("Old body");
+      queueMainUpdate("New body");
+      queueResponse("note_versions", { data: null, error: { message: "insert failed" } });
+
+      const response = await PATCH(
+        requestFor("PATCH", { title: "Trip planning", description: "New body" }),
+        { params },
+      );
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({ versionId: null });
+      expect(consoleError).toHaveBeenCalled();
+      consoleError.mockRestore();
+    });
   });
 });

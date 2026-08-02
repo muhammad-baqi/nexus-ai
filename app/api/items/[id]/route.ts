@@ -50,6 +50,50 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
   return NextResponse.json(data);
 }
 
+// Inserts a new note_versions row, or updates the caller-specified *currently open* one in
+// place, per Notes.md's Version History coalescing rule. Deliberately keyed by an explicit
+// version id supplied by the client (echoed back from the previous save's response) rather than
+// "whichever row has the newest created_at" — inferring "latest" would let a coalescing update
+// silently land on the WRONG row (and corrupt an unrelated, genuinely-historical version)
+// whenever a previous boundary-opening write failed to actually insert its row (self-review
+// caught this as a real, not just theoretical, data-integrity bug). Returns the id of the
+// version row that now holds this content, or null if the write failed — never throws, since a
+// lost history entry shouldn't fail the save that already succeeded (CLAUDE.md rule 7).
+async function writeNoteVersion(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  itemId: string,
+  content: string,
+  openVersionId: string | null,
+): Promise<string | null> {
+  try {
+    if (openVersionId) {
+      const { data, error } = await supabase
+        .from("note_versions")
+        .update({ content })
+        .eq("id", openVersionId)
+        .eq("knowledge_item_id", itemId)
+        .select("id")
+        .maybeSingle();
+      if (error) throw error;
+      // A match means the coalesce succeeded. No match (id didn't belong to this item, or
+      // never actually existed because an earlier write failed) falls through to insert a
+      // fresh row instead of silently doing nothing.
+      if (data) return data.id;
+    }
+
+    const { data, error } = await supabase
+      .from("note_versions")
+      .insert({ knowledge_item_id: itemId, content })
+      .select("id")
+      .single();
+    if (error) throw error;
+    return data.id;
+  } catch (error) {
+    console.error("[api/items/:id] version write failed:", error);
+    return null;
+  }
+}
+
 export async function PATCH(request: NextRequest, { params }: RouteParams) {
   const { id } = await params;
   if (!itemIdSchema.safeParse(id).success) return invalidIdResponse();
@@ -69,13 +113,35 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
     );
   }
 
+  const { openVersionId, ...itemFields } = result.data;
+
   const supabase = await createClient();
   const { user, response } = await requireUser(supabase);
   if (!user) return response;
 
+  // Needed to know whether this PATCH's description actually changed (the client always sends
+  // title+description together, whichever one changed) and whether this item is a note at all
+  // — note_versions only applies to notes.
+  let previousDescription: string | null = null;
+  let itemType: string | null = null;
+  if ("description" in itemFields) {
+    const { data: existing, error: existingError } = await supabase
+      .from("knowledge_items")
+      .select("description, type")
+      .eq("id", id)
+      .eq("owner_id", user.id)
+      .is("deleted_at", null)
+      .single();
+    if (existingError) {
+      console.error("[api/items/:id] prior-state lookup failed:", existingError);
+    }
+    previousDescription = existing?.description ?? null;
+    itemType = existing?.type ?? null;
+  }
+
   const { data, error } = await supabase
     .from("knowledge_items")
-    .update(result.data)
+    .update(itemFields)
     .eq("id", id)
     .eq("owner_id", user.id)
     .is("deleted_at", null)
@@ -96,5 +162,14 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
     );
   }
 
-  return NextResponse.json(data);
+  let versionId: string | null = null;
+  if (
+    itemType === "note" &&
+    typeof data.description === "string" &&
+    data.description !== previousDescription
+  ) {
+    versionId = await writeNoteVersion(supabase, id, data.description, openVersionId ?? null);
+  }
+
+  return NextResponse.json({ ...data, versionId });
 }

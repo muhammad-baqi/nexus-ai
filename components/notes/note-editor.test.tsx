@@ -20,6 +20,21 @@ vi.mock("@/components/notes/note-rich-text-editor", () => ({
   ),
 }));
 
+// Isolates NoteVersionHistory's own fetch/render behavior (already covered by
+// note-version-history.test.tsx) from NoteEditor's own wiring: the toggle, and threading a
+// restore's content/versionId back into local state and the autosave hook's baseline.
+vi.mock("@/components/notes/note-version-history", () => ({
+  NoteVersionHistory: ({
+    onRestored,
+  }: {
+    onRestored: (content: string, versionId: string | null) => void;
+  }) => (
+    <button type="button" onClick={() => onRestored("# Restored content", "restored-version")}>
+      Simulate restore
+    </button>
+  ),
+}));
+
 function jsonResponse(body: unknown, ok = true) {
   return { ok, status: ok ? 200 : 500, json: async () => body };
 }
@@ -117,7 +132,11 @@ describe("NoteEditor", () => {
       "/api/items/item-1",
       expect.objectContaining({
         method: "PATCH",
-        body: JSON.stringify({ title: "Trip planning", description: "Updated list" }),
+        body: JSON.stringify({
+          title: "Trip planning",
+          description: "Updated list",
+          openVersionId: null,
+        }),
       }),
     );
   });
@@ -247,8 +266,128 @@ describe("NoteEditor", () => {
         body: JSON.stringify({
           title: "Trip planning",
           description: "Packing list edited via rich text",
+          openVersionId: null,
         }),
       }),
     );
+  });
+
+  describe("version history", () => {
+    it("the History toggle shows/hides the panel, in both view and edit mode", async () => {
+      (fetch as ReturnType<typeof vi.fn>).mockResolvedValue(jsonResponse(baseItem));
+
+      render(<NoteEditor itemId="item-1" />);
+      await flush();
+
+      expect(screen.queryByText("Simulate restore")).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "History" }));
+      expect(screen.getByText("Simulate restore")).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole("button", { name: /^edit$/i }));
+      // Opened from view mode — stays open after switching to edit mode.
+      expect(screen.getByText("Simulate restore")).toBeInTheDocument();
+    });
+
+    it("restoring a version updates the visible body and does not immediately fire another autosave PATCH for that same content", async () => {
+      (fetch as ReturnType<typeof vi.fn>).mockResolvedValue(jsonResponse(baseItem));
+
+      render(<NoteEditor itemId="item-1" />);
+      await flush();
+      fireEvent.click(screen.getByRole("button", { name: /^edit$/i }));
+      fireEvent.click(screen.getByRole("button", { name: "History" }));
+      (fetch as ReturnType<typeof vi.fn>).mockClear();
+
+      fireEvent.click(screen.getByRole("button", { name: "Simulate restore" }));
+
+      expect(screen.getByDisplayValue("# Restored content")).toBeInTheDocument();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5000);
+      });
+      expect(fetch).not.toHaveBeenCalled();
+    });
+
+    it("the first autosave after entering Edit mode sends openVersionId: null; a restore's versionId is used for the next one", async () => {
+      (fetch as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce(jsonResponse(baseItem))
+        .mockResolvedValueOnce(jsonResponse({ ...baseItem, description: "Second edit" }));
+
+      render(<NoteEditor itemId="item-1" />);
+      await flush();
+      fireEvent.click(screen.getByRole("button", { name: /^edit$/i }));
+      fireEvent.click(screen.getByRole("button", { name: "History" }));
+      fireEvent.click(screen.getByRole("button", { name: "Simulate restore" }));
+
+      fireEvent.change(screen.getByLabelText("Body"), { target: { value: "Second edit" } });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1500);
+      });
+
+      expect(fetch).toHaveBeenCalledWith(
+        "/api/items/item-1",
+        expect.objectContaining({
+          body: JSON.stringify({
+            title: "Trip planning",
+            description: "Second edit",
+            openVersionId: "restored-version",
+          }),
+        }),
+      );
+    });
+
+    it("a stale in-flight autosave response doesn't clobber a restore that happened while it was pending", async () => {
+      // Self-review-caught race: without a generation guard, a slow autosave started *before*
+      // a restore could resolve *after* it and silently revert both the visible content and
+      // which version the next autosave coalesces into.
+      let resolveStalePatch!: (value: unknown) => void;
+      (fetch as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce(jsonResponse(baseItem))
+        .mockReturnValueOnce(
+          new Promise((resolve) => {
+            resolveStalePatch = resolve;
+          }),
+        )
+        .mockResolvedValueOnce(jsonResponse({ ...baseItem, description: "Third edit" }));
+
+      render(<NoteEditor itemId="item-1" />);
+      await flush();
+      fireEvent.click(screen.getByRole("button", { name: /^edit$/i }));
+
+      fireEvent.change(screen.getByLabelText("Body"), { target: { value: "First edit" } });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1500); // first autosave now in flight, unresolved
+      });
+
+      fireEvent.click(screen.getByRole("button", { name: "History" }));
+      fireEvent.click(screen.getByRole("button", { name: "Simulate restore" }));
+      expect(screen.getByDisplayValue("# Restored content")).toBeInTheDocument();
+
+      // The stale first PATCH resolves now, reporting the pre-restore content and a different
+      // versionId — this must not override the restore.
+      await act(async () => {
+        resolveStalePatch(
+          jsonResponse({ ...baseItem, description: "First edit", versionId: "stale-version" }),
+        );
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(screen.getByDisplayValue("# Restored content")).toBeInTheDocument();
+
+      // The next autosave must coalesce into the restore's version, not the stale one.
+      fireEvent.change(screen.getByLabelText("Body"), { target: { value: "Third edit" } });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1500);
+      });
+
+      expect(fetch).toHaveBeenLastCalledWith(
+        "/api/items/item-1",
+        expect.objectContaining({
+          body: JSON.stringify({
+            title: "Trip planning",
+            description: "Third edit",
+            openVersionId: "restored-version",
+          }),
+        }),
+      );
+    });
   });
 });

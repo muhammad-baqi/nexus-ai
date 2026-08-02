@@ -17,7 +17,10 @@ function waitForAutosave(page: import("@playwright/test").Page) {
 // the raw content and its rendering persist through a real round-trip against the local Supabase
 // stack (not just optimistic client state). Also exercises the Markdown/Rich text toggle:
 // authors new content via the WYSIWYG toolbar, confirms it round-trips to real Markdown syntax
-// when switched back, and that it autosaves/persists identically to hand-typed Markdown.
+// when switched back, and that it autosaves/persists identically to hand-typed Markdown. Finally
+// exercises Version History: three separate edit sessions each open their own version, History
+// lists all three, previewing and restoring the oldest brings its content back as the current
+// rendered view (confirmed live, and again after a reload).
 test("create a note, edit title and body, and confirm formatting persists and renders @smoke", async ({
   page,
 }) => {
@@ -104,6 +107,35 @@ test("create a note, edit title and body, and confirm formatting persists and re
   await page.reload();
   await expect(page.getByRole("heading", { name: "New Section" })).toBeVisible();
   await expect(page.locator("strong", { hasText: "Extra emphasis" })).toBeVisible();
+
+  // Version history: the two edit sessions above (fill+Done, then Rich-text edit+Markdown
+  // toggle+Done) each opened their own version boundary. A third short session — replacing the
+  // body entirely — creates a third version, then History lets us go back to the very first one.
+  await page.getByRole("button", { name: "Edit" }).click();
+  patched = waitForAutosave(page);
+  await page.getByLabel("Body").fill("Replaced entirely for the version-history check.");
+  await patched;
+  await page.getByRole("button", { name: "Done" }).click();
+  await expect(page.getByText("Replaced entirely for the version-history check.")).toBeVisible();
+
+  await page.getByRole("button", { name: "History" }).click();
+  const previewButtons = page.getByRole("button", { name: "Preview" });
+  await expect(previewButtons).toHaveCount(3);
+
+  // The list is newest-first — the last entry is the very first version ever saved.
+  await previewButtons.last().click();
+  await expect(page.getByRole("heading", { name: "Details" })).toBeVisible();
+  await expect(page.locator("strong", { hasText: "Don't forget" })).toBeVisible();
+
+  await page.getByRole("button", { name: "Restore this version" }).click();
+  // Restoring updates the rendered view immediately, without needing a reload.
+  await expect(page.getByRole("heading", { name: "Details" })).toBeVisible();
+  await expect(page.locator("strong", { hasText: "Don't forget" })).toBeVisible();
+  await expect(page.getByText("Replaced entirely for the version-history check.")).not.toBeVisible();
+
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "Details" })).toBeVisible();
+  await expect(page.locator("strong", { hasText: "Don't forget" })).toBeVisible();
 
   // The note is also reachable and shows its real title from the collection view, not the
   // "Untitled Note" placeholder it was created with.

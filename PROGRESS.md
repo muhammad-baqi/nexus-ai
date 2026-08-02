@@ -19,10 +19,10 @@ re-investigate only if it starts affecting Vercel too. `develop`/`staging`/`main
 Infra is now fully set up: two Vercel projects (staging → `staging`, production → `main`), two
 Supabase projects (`nexus-staging`, `nexus-prod`) with all 3 migrations applied to both.
 
-**Day 3 in progress (4/11)**: Notes — create/edit title+body, Notes — rich formatting, Notes —
-Markdown source / WYSIWYG toggle, and Notes — autosave all shipped — see below. `develop` is
-ahead of `staging`/`main` again as normal feature work resumes (Day 3 releases to staging only,
-not production, per `Roadmap.md`).
+**Day 3 in progress (5/11)**: Notes — create/edit title+body, Notes — rich formatting, Notes —
+Markdown source / WYSIWYG toggle, Notes — autosave, and Notes — version history all shipped —
+see below. `develop` is ahead of `staging`/`main` again as normal feature work resumes (Day 3
+releases to staging only, not production, per `Roadmap.md`).
 
 ---
 
@@ -265,7 +265,7 @@ CLI commands don't default to prod.
   `.claude/docs/git-workflow.md`. Day 2 QA gate (`.claude/docs/qa-checklist.md`) still to run
   before that promotion.
 
-## Day 3 — Knowledge Management — release Wednesday (staging only) (4/11)
+## Day 3 — Knowledge Management — release Wednesday (staging only) (5/11)
 
 - [x] Notes — create, edit title/body — `app/api/items` (list/create) + `app/api/items/:id`
   (get/update) against the existing `knowledge_items` table (type='note'); no new migration, RLS
@@ -367,7 +367,45 @@ CLI commands don't default to prod.
   serving pre-change compiled output until `docker compose restart app` after a `.next` cache
   clear; noted again here since it cost real debugging time before being recognized as the
   same pre-existing environment quirk.
-- [ ] Notes — version history (view list, view a version, restore)
+- [x] Notes — version history (view list, view a version, restore) — no new migration needed:
+  `note_versions`, its RLS policy, and its index already existed from Day 1's schema. New routes
+  `GET /api/items/:id/versions` (list, `{id, created_at}` only), `GET .../versions/:versionId`
+  (full content, for preview), `POST .../versions/:versionId/restore` (restores the item's
+  `description` and inserts a **new** version entry — restoring never deletes/overwrites
+  history, per `Notes.md`). New `components/notes/note-version-history.tsx` panel (list +
+  preview via the existing `NoteBody` + restore), toggled by a new "History" button in
+  `NoteEditor`, visible in both view and edit mode. **Scope decision**: version boundaries are
+  per edit-session (Edit → ... → Done) rather than a rolling idle timer — the first autosave of
+  a session opens a new version, later autosaves in the same session coalesce into it; a user
+  who pauses for minutes without ever leaving Edit mode still coalesces into one version. This
+  was a deliberate simplification flagged in the plan (a true idle-timer would need a server-side
+  `updated_at` column and a tuned threshold, and is much harder to test deterministically).
+  Self-review (code-reviewer subagent) caught two real data-integrity bugs in the original
+  design (a client-supplied boolean `newVersionBoundary` flag, with the server inferring "the
+  open version" as "whichever `note_versions` row has the newest `created_at`") and both were
+  redesigned, not just patched: (1) that "latest" inference could silently coalesce into, and
+  corrupt, an unrelated genuinely-historical row whenever an earlier boundary-opening insert had
+  failed — fixed by tracking the open version's actual id explicitly, round-tripped between
+  client and server (`openVersionId` in the request, `versionId` echoed back in the response),
+  falling back to a fresh insert whenever the id doesn't resolve rather than guessing; (2) a
+  slow autosave started before a restore could resolve after it and silently revert the restore
+  (both the visible content and which version the next edit would coalesce into) — fixed with a
+  `saveGenerationRef` guard in `NoteEditor` that ignores a stale response's effect on local state
+  once a restore has happened, with a dedicated regression test proving it. Self-review also
+  caught and fixed: the single-version GET route didn't check `deleted_at` on the parent item
+  (a trashed note's old content should not stay readable via a previously-fetched version id);
+  the `updateItemSchema` "at least one field" refine didn't exclude the new bookkeeping field, so
+  a body containing only it would pass validation and reach a meaningless empty update; and a
+  version-write failure was originally logged with the same generic message regardless of which
+  step failed. 303/303 unit/integration tests green (34 new: PATCH's version-boundary logic,
+  the three new route files' ownership/scoping and success/failure paths, the new
+  `NoteVersionHistory` component, and `NoteEditor`'s wiring including the race-condition
+  regression test), typecheck clean, all 6 Playwright `@smoke` tests green (`e2e/notes.spec.ts`
+  extended: three separate edit sessions each open their own version, History lists all three,
+  restoring the oldest updates the rendered view immediately and persists through a reload).
+  Verified live in the browser (Claude-in-Chrome against the local Supabase stack): two edit
+  sessions, opened History, previewed and restored the older version, confirmed the content
+  updated immediately and persisted after a reload.
 - [ ] Notes — checklist items toggleable from rendered view
 - [ ] Shared item behavior — tag (create/rename/delete/merge), favorite, archive
 - [ ] Shared item behavior — move between collections

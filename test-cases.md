@@ -166,3 +166,35 @@ leave them as a style reference; either is fine.)*
 - [x] `NoteEditor`: leaving edit mode (Done) and reopening it (Edit) preserves an in-progress draft instead of reverting to the last-synced server value (regression test for the `startEditing` discard-bug fix)
 - [x] `NoteEditor`: editing via the Rich text surface also drives the same autosave cycle as Markdown
 - [x] (Playwright `@smoke`, `e2e/notes.spec.ts`) Create a note, type a title/body, wait for the debounced autosave (no Save click), reload, confirm the content persisted.
+
+## Notes — version history (Day 3)
+
+> Design note: the plan originally scoped coalescing via a client-supplied `newVersionBoundary`
+> boolean. Self-review found that inferring "the currently open version" as "whichever
+> note_versions row has the newest created_at" could silently corrupt an unrelated, genuinely
+> historical row whenever an earlier boundary-opening insert had failed. Fixed by tracking the
+> open version's actual id end-to-end (`openVersionId` in the request, `versionId` echoed back
+> in the response) instead of re-deriving "latest" — the cases below reflect that design, not
+> the original boolean-flag one.
+
+- [x] `PATCH /api/items/:id` returns 400 for a body containing only `openVersionId` (no real field) — the `updateItemSchema` refine needed to explicitly exclude it from the "at least one field" check
+- [x] `PATCH /api/items/:id`: a title-only update (no `description`) never touches `note_versions` and returns `versionId: null`
+- [x] `PATCH /api/items/:id`: `openVersionId` omitted inserts a new version row
+- [x] `PATCH /api/items/:id`: `openVersionId` provided and matching an existing row updates it in place (coalesce) rather than inserting
+- [x] `PATCH /api/items/:id`: an `openVersionId` that doesn't match any row for this item (stale/foreign id) falls back to inserting a new row rather than silently doing nothing
+- [x] `PATCH /api/items/:id`: a `description` unchanged from the currently-stored value doesn't write a version
+- [x] `PATCH /api/items/:id`: version-write logic is skipped entirely for non-note item types
+- [x] `PATCH /api/items/:id`: a version-write failure (insert or coalesce-update throws) still returns 200 with the updated item and `versionId: null`, and logs server-side
+- [x] `GET /api/items/:id/versions` returns 400 on an invalid item id, 401 unauthenticated, 404 when the item doesn't exist/isn't owned (explicit check, not just an empty list), and versions ordered newest-first as `{id, created_at}` only (no `content`); 500 + logs on a query failure
+- [x] `GET /api/items/:id/versions/:versionId` returns 400 on an invalid item or version id, 404 when the item itself is gone/trashed (self-review-caught gap: this route didn't originally check `deleted_at`, unlike its sibling list route), 404 when the version doesn't exist or belongs to a different item, and the version's full content on success
+- [x] `POST /api/items/:id/versions/:versionId/restore` returns 400/401/404 as above; on success updates the item's `description` to the version's content, inserts a **new** `note_versions` row with that content (not a reuse of the restored one), and returns the updated item plus the new version's id (`versionId`); a failure inserting that new row still returns 200 with the restored item and `versionId: null` (self-review-caught: this `null` is what tells the client's next autosave to open a fresh boundary instead of guessing at, and corrupting, some other row)
+- [x] `NoteVersionHistory` fetches and renders the version list with formatted timestamps on mount
+- [x] `NoteVersionHistory` shows an empty-state message when there are no versions yet
+- [x] `NoteVersionHistory` shows a retry-able error if the list fetch fails
+- [x] `NoteVersionHistory`: clicking "Preview" fetches and renders that version's content read-only via the existing `NoteBody` component (real elements, not raw Markdown)
+- [x] `NoteVersionHistory`: clicking "Restore this version" calls the restore endpoint and invokes `onRestored` with the restored content and the new version's id
+- [x] `NoteEditor`: the "History" toggle shows/hides the panel, in both view and edit mode
+- [x] `NoteEditor`: restoring a version updates the visible body and does not immediately fire another autosave PATCH for that same content (proves `resetBaseline` is called)
+- [x] `NoteEditor`: the first autosave after entering Edit mode sends `openVersionId: null`; after a restore, the next autosave sends the restore's returned `versionId` (proves the id round-trips through `NoteEditor` rather than being re-derived)
+- [x] `NoteEditor` regression (self-review-caught race): a stale in-flight autosave response that resolves *after* a restore doesn't clobber the restored content or which version the next autosave coalesces into (`saveGenerationRef` guard)
+- [x] (Playwright `@smoke`, `e2e/notes.spec.ts` extended) Three separate edit sessions on the same note each open their own version; opening History lists all three, previewing and restoring the oldest one brings its content back as the current rendered view immediately, and again after a reload.
