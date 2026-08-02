@@ -198,3 +198,42 @@ leave them as a style reference; either is fine.)*
 - [x] `NoteEditor`: the first autosave after entering Edit mode sends `openVersionId: null`; after a restore, the next autosave sends the restore's returned `versionId` (proves the id round-trips through `NoteEditor` rather than being re-derived)
 - [x] `NoteEditor` regression (self-review-caught race): a stale in-flight autosave response that resolves *after* a restore doesn't clobber the restored content or which version the next autosave coalesces into (`saveGenerationRef` guard)
 - [x] (Playwright `@smoke`, `e2e/notes.spec.ts` extended) Three separate edit sessions on the same note each open their own version; opening History lists all three, previewing and restoring the oldest one brings its content back as the current rendered view immediately, and again after a reload.
+
+## Notes — checklist toggle from view (Day 3)
+
+> Design note: the plan's original `toggleTaskAtIndex` was a hand-rolled line-scan regex.
+> Self-review verified (against the real installed `react-markdown`/`remark-gfm`) that this
+> miscounted checkboxes for realistic content — ordered-list task items, a task item nested in
+> a blockquote, and a fenced code block containing task-marker-looking text all disagreed with
+> react-markdown's actual rendering order. Replaced with a real `remark-parse`/`remark-gfm`
+> parse + `unist-util-visit` walk + `remark-stringify` serialize, so "the Nth checkbox this
+> function finds" and "the Nth checkbox react-markdown renders" are guaranteed to agree (same
+> library, same rules). The cases below reflect that final design.
+
+`lib/notes/toggle-task.test.ts`:
+- [x] Flips an unchecked item (`[ ]` → `[x]`) at the given index, leaving every other line untouched
+- [x] Flips a checked item (`[x]` → `[ ]`) at the given index
+- [x] Returns `null` for an out-of-range index rather than corrupting content
+- [x] Preserves the `-` bullet style (matches this app's own Markdown convention) rather than `remark-stringify`'s default `*`
+- [x] Regression: counts task items nested in a blockquote and mixed with an ordered list in true document order, matching react-markdown's real rendering order (the case self-review's line-scan-regex version got wrong)
+- [x] Regression: does not mistake task-marker-looking text inside a fenced code block for a real checkbox
+
+`components/notes/note-body.test.tsx` (extended):
+- [x] Checkboxes stay `disabled` and inert when `onToggleTask` is omitted (existing case, reconfirmed — the read-only/preview path is unchanged)
+- [x] When `onToggleTask` is provided, checkboxes are not disabled, and clicking the Nth one calls `onToggleTask` with `index = N`
+
+`components/notes/note-editor.test.tsx` (extended):
+- [x] Clicking a checkbox in view mode immediately PATCHes the item with the toggled content — no debounce wait, no Edit click needed first
+- [x] The view updates optimistically before the PATCH resolves, and reflects the server's response once it does
+- [x] A failed toggle reverts the checkbox to its prior state and shows an inline error
+- [x] The toggle sends the currently-open `openVersionId`, coalescing into the same version as autosave would
+
+Fixed via self-review (not separately re-tested as distinct cases, since they're the same
+mechanisms already covered above/elsewhere): the toggle handler reads its base content from
+`body` (the true live state), not `item.description` (which can lag behind `body` for a moment
+after Done is clicked before the autosave debounce fires) — reusing the exact regression
+scenario already covered by "leaving edit mode (Done) and reopening it (Edit) preserves an
+in-progress draft" case above, just for the toggle path instead of the reopen-Edit path. View
+mode's `NoteBody` now also renders `body` instead of `item.description`, for the same reason.
+
+- [x] (Playwright `@smoke`, `e2e/notes.spec.ts` extended) From the rendered (non-edit) view of a note with an existing checklist, click a checkbox directly — no Edit click — confirm it becomes checked immediately, reload, confirm it persisted.

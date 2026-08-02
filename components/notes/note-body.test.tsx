@@ -1,5 +1,5 @@
-import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 
 import { NoteBody } from "./note-body";
 
@@ -75,6 +75,18 @@ describe("NoteBody", () => {
     expect(checkboxes[0]).toBeDisabled();
     expect(checkboxes[1]).not.toBeChecked();
     expect(checkboxes[1]).toBeDisabled();
+  });
+
+  it("checkboxes become interactive when onToggleTask is provided, and report the clicked checkbox's document-order index", () => {
+    const onToggleTask = vi.fn();
+    render(<NoteBody content={"- [x] Done\n- [ ] Not done"} onToggleTask={onToggleTask} />);
+
+    const checkboxes = screen.getAllByRole("checkbox") as HTMLInputElement[];
+    expect(checkboxes[0]).not.toBeDisabled();
+    expect(checkboxes[1]).not.toBeDisabled();
+
+    fireEvent.click(checkboxes[1]);
+    expect(onToggleTask).toHaveBeenCalledWith(1);
   });
 
   it("renders a fenced code block with a language tag as highlighted code", () => {

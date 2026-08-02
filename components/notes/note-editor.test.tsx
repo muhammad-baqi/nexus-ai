@@ -390,4 +390,129 @@ describe("NoteEditor", () => {
       );
     });
   });
+
+  describe("checklist toggle from the rendered view", () => {
+    it("clicking a checkbox in view mode immediately PATCHes the toggled content, without entering edit mode", async () => {
+      (fetch as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce(
+          jsonResponse({ ...baseItem, description: "- [ ] Book flights\n- [ ] Pack bag" }),
+        )
+        .mockResolvedValueOnce(
+          jsonResponse({
+            ...baseItem,
+            description: "- [x] Book flights\n- [ ] Pack bag",
+            versionId: "v1",
+          }),
+        );
+
+      render(<NoteEditor itemId="item-1" />);
+      await flush();
+
+      fireEvent.click(screen.getAllByRole("checkbox")[0]);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+
+      expect(fetch).toHaveBeenCalledWith(
+        "/api/items/item-1",
+        expect.objectContaining({
+          method: "PATCH",
+          body: JSON.stringify({
+            title: "Trip planning",
+            // toggleTaskAtIndex re-serializes via remark-stringify, which always ends output
+            // with a trailing newline.
+            description: "- [x] Book flights\n- [ ] Pack bag\n",
+            openVersionId: null,
+          }),
+        }),
+      );
+      // Still in view mode — no Edit click was ever needed.
+      expect(screen.queryByLabelText("Title")).not.toBeInTheDocument();
+    });
+
+    it("updates the view optimistically before the PATCH resolves", async () => {
+      let resolvePatch!: (value: unknown) => void;
+      (fetch as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce(jsonResponse({ ...baseItem, description: "- [ ] Task" }))
+        .mockReturnValueOnce(
+          new Promise((resolve) => {
+            resolvePatch = resolve;
+          }),
+        );
+
+      render(<NoteEditor itemId="item-1" />);
+      await flush();
+
+      fireEvent.click(screen.getByRole("checkbox"));
+      expect(screen.getByRole("checkbox")).toBeChecked();
+
+      await act(async () => {
+        resolvePatch(jsonResponse({ ...baseItem, description: "- [x] Task", versionId: "v1" }));
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(screen.getByRole("checkbox")).toBeChecked();
+    });
+
+    it("reverts the checkbox and shows an inline error when the toggle PATCH fails", async () => {
+      (fetch as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce(jsonResponse({ ...baseItem, description: "- [ ] Task" }))
+        .mockResolvedValueOnce(jsonResponse({ error: { message: "boom" } }, false));
+
+      render(<NoteEditor itemId="item-1" />);
+      await flush();
+
+      fireEvent.click(screen.getByRole("checkbox"));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+
+      expect(screen.getByRole("checkbox")).not.toBeChecked();
+      expect(screen.getByRole("alert")).toHaveTextContent(/went wrong/i);
+    });
+
+    it("the toggle reuses the currently-open version, coalescing exactly like autosave", async () => {
+      (fetch as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce(jsonResponse({ ...baseItem, description: "- [ ] Task" }))
+        .mockResolvedValueOnce(
+          jsonResponse({
+            ...baseItem,
+            description: "- [ ] Task edited",
+            versionId: "existing-version",
+          }),
+        )
+        .mockResolvedValueOnce(
+          jsonResponse({
+            ...baseItem,
+            description: "- [x] Task edited",
+            versionId: "existing-version",
+          }),
+        );
+
+      render(<NoteEditor itemId="item-1" />);
+      await flush();
+
+      fireEvent.click(screen.getByRole("button", { name: /^edit$/i }));
+      fireEvent.change(screen.getByLabelText("Body"), { target: { value: "- [ ] Task edited" } });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1500);
+      });
+      fireEvent.click(screen.getByRole("button", { name: /^done$/i }));
+
+      fireEvent.click(screen.getByRole("checkbox"));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+
+      expect(fetch).toHaveBeenLastCalledWith(
+        "/api/items/item-1",
+        expect.objectContaining({
+          body: JSON.stringify({
+            title: "Trip planning",
+            description: "- [x] Task edited\n",
+            openVersionId: "existing-version",
+          }),
+        }),
+      );
+    });
+  });
 });

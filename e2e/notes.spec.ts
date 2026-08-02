@@ -20,7 +20,8 @@ function waitForAutosave(page: import("@playwright/test").Page) {
 // when switched back, and that it autosaves/persists identically to hand-typed Markdown. Finally
 // exercises Version History: three separate edit sessions each open their own version, History
 // lists all three, previewing and restoring the oldest brings its content back as the current
-// rendered view (confirmed live, and again after a reload).
+// rendered view (confirmed live, and again after a reload). Finally clicks a checklist checkbox
+// directly from that rendered (non-edit) view, confirming it toggles and autosaves immediately.
 test("create a note, edit title and body, and confirm formatting persists and renders @smoke", async ({
   page,
 }) => {
@@ -136,6 +137,21 @@ test("create a note, edit title and body, and confirm formatting persists and re
   await page.reload();
   await expect(page.getByRole("heading", { name: "Details" })).toBeVisible();
   await expect(page.locator("strong", { hasText: "Don't forget" })).toBeVisible();
+
+  // Checklist toggle from the rendered view: the restored content's checklist is visible right
+  // here in view mode — click a checkbox directly, no Edit click needed, and it autosaves
+  // immediately (Notes.md's Checklists section).
+  const viewCheckboxes = page.getByRole("checkbox");
+  await expect(viewCheckboxes).toHaveCount(2);
+  await expect(viewCheckboxes.nth(1)).not.toBeChecked();
+  patched = waitForAutosave(page);
+  await viewCheckboxes.nth(1).click();
+  await patched;
+  await expect(viewCheckboxes.nth(1)).toBeChecked();
+  await expect(page.getByLabel("Title")).not.toBeVisible(); // never entered edit mode
+
+  await page.reload();
+  await expect(page.getByRole("checkbox").nth(1)).toBeChecked();
 
   // The note is also reachable and shows its real title from the collection view, not the
   // "Untitled Note" placeholder it was created with.

@@ -10,6 +10,7 @@ import { NoteBody } from "@/components/notes/note-body";
 import { NoteRichTextEditor } from "@/components/notes/note-rich-text-editor";
 import { NoteVersionHistory } from "@/components/notes/note-version-history";
 import { type AutosaveStatus, useNoteAutosave } from "@/components/notes/use-note-autosave";
+import { toggleTaskAtIndex } from "@/lib/notes/toggle-task";
 import { DEFAULT_NOTE_TITLE } from "@/lib/validation/items";
 
 type EditSurface = "markdown" | "richtext";
@@ -45,6 +46,7 @@ export function NoteEditor({ itemId }: Props) {
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [toggleError, setToggleError] = useState<string | undefined>();
 
   // The note_versions row the *next* autosave should coalesce into — null means "open a new
   // boundary instead" (a fresh Edit session, or the previous write's version-bookkeeping
@@ -126,10 +128,12 @@ export function NoteEditor({ itemId }: Props) {
     // `item` here would silently discard an unsaved edit if a save is stuck retrying.
     setEditSurface("markdown");
     openVersionIdRef.current = null;
+    setToggleError(undefined);
     setMode("edit");
   }
 
   function finishEditing() {
+    setToggleError(undefined);
     setMode("view");
   }
 
@@ -142,6 +146,68 @@ export function NoteEditor({ itemId }: Props) {
     // treating it as a new unsaved edit and firing a redundant PATCH for content that's already
     // saved server-side.
     resetBaseline({ title, body: content });
+  }
+
+  // Toggling a checklist item from the rendered view (not edit mode) autosaves immediately —
+  // Notes.md's Checklists section. Bypasses useNoteAutosave's debounce (that's for the
+  // continuous typing stream in edit mode) in favor of a direct, immediate, optimistic PATCH,
+  // since this is a single discrete action — but still reuses the hook's baseline/status
+  // machinery via resetBaseline, so the two paths can't race each other (see below).
+  async function handleToggleTask(index: number) {
+    if (!item) return;
+    // Based on `body`, not `item.description`: `item` only reflects the last *successful*
+    // save, which can lag behind `body` (e.g. Done was clicked before the 1500ms autosave
+    // debounce fired). Toggling against the stale value — and, worse, overwriting `body` with
+    // a version that doesn't include the not-yet-saved edit — would silently drop that edit
+    // (self-review-caught bug). `body` is always the true current content.
+    const previousBody = body;
+    const nextContent = toggleTaskAtIndex(previousBody, index);
+    if (nextContent === null) return;
+
+    setToggleError(undefined);
+    setBody(nextContent);
+    setItem((prev) => (prev ? { ...prev, description: nextContent } : prev));
+    // Tells the autosave hook this is already the saved baseline *before* this function's own
+    // PATCH resolves — otherwise the hook's own debounce is still armed by the setBody above and
+    // could independently fire a redundant, racing PATCH for the same change if this request is
+    // slow (self-review-caught gap in an earlier version of this fix).
+    resetBaseline({ title, body: nextContent });
+
+    const generation = ++saveGenerationRef.current;
+    const response = await fetch(`/api/items/${itemId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title,
+        description: nextContent,
+        openVersionId: openVersionIdRef.current,
+      }),
+    });
+
+    if (!response.ok) {
+      console.error(
+        "[NoteEditor] checklist toggle failed:",
+        response.status,
+        await parseErrorMessage(response, "unknown error"),
+      );
+      if (saveGenerationRef.current === generation) {
+        setBody(previousBody);
+        setItem((prev) => (prev ? { ...prev, description: previousBody } : prev));
+        resetBaseline({ title, body: previousBody });
+        setToggleError("Something went wrong saving that — try again.");
+      }
+      return;
+    }
+
+    const updated: Item & { versionId: string | null } = await response.json();
+    if (saveGenerationRef.current !== generation) {
+      // Something newer (another toggle, a restore) has already landed — don't overwrite it.
+      return;
+    }
+    setItem(updated);
+    setBody(updated.description ?? "");
+    openVersionIdRef.current = updated.versionId;
+    resetBaseline({ title, body: updated.description ?? "" });
   }
 
   if (loadError) {
@@ -265,8 +331,16 @@ export function NoteEditor({ itemId }: Props) {
         </div>
       </div>
       {statusIndicator}
+      {toggleError && (
+        <p className="text-destructive text-sm" role="alert">
+          {toggleError}
+        </p>
+      )}
       {historyOpen && <NoteVersionHistory itemId={itemId} onRestored={handleRestored} />}
-      <NoteBody content={item.description ?? ""} />
+      {/* body, not item.description: item only reflects the last successful save, which can
+          lag behind body for a moment (e.g. Done clicked before the autosave debounce fired) —
+          rendering item here would show stale content the user didn't just type. */}
+      <NoteBody content={body} onToggleTask={handleToggleTask} />
     </div>
   );
 }
