@@ -5,7 +5,9 @@
 > and release cadence are `docs/00_Project/Roadmap.md`.
 > `[ ]` = not started · `[~]` = in progress · `[x]` = done & committed.
 
-Last updated: 2026-08-01 — **Day 2 QA gate passed**, both 🔴 blockers found and closed:
+Last updated: 2026-08-02 — Notes — checklist toggle from rendered view shipped, see below.
+
+Previously, 2026-08-01 — **Day 2 QA gate passed**, both 🔴 blockers found and closed:
 `e2e/login.spec.ts`/`e2e/logout.spec.ts` were stale (still asserted the pre-Dashboard-shell
 landing-on-`/` behavior instead of the redirect to `/dashboard`) — fixed on
 `fix/e2e-dashboard-redirect`, all 5 `@smoke` tests green. `npm run build` fails locally in this
@@ -19,10 +21,11 @@ re-investigate only if it starts affecting Vercel too. `develop`/`staging`/`main
 Infra is now fully set up: two Vercel projects (staging → `staging`, production → `main`), two
 Supabase projects (`nexus-staging`, `nexus-prod`) with all 3 migrations applied to both.
 
-**Day 3 in progress (5/11)**: Notes — create/edit title+body, Notes — rich formatting, Notes —
-Markdown source / WYSIWYG toggle, Notes — autosave, and Notes — version history all shipped —
-see below. `develop` is ahead of `staging`/`main` again as normal feature work resumes (Day 3
-releases to staging only, not production, per `Roadmap.md`).
+**Day 3 in progress (6/11)**: Notes — create/edit title+body, Notes — rich formatting, Notes —
+Markdown source / WYSIWYG toggle, Notes — autosave, Notes — version history, and Notes —
+checklist toggle from rendered view all shipped — see below. `develop` is ahead of
+`staging`/`main` again as normal feature work resumes (Day 3 releases to staging only, not
+production, per `Roadmap.md`).
 
 ---
 
@@ -406,7 +409,26 @@ CLI commands don't default to prod.
   Verified live in the browser (Claude-in-Chrome against the local Supabase stack): two edit
   sessions, opened History, previewed and restored the older version, confirmed the content
   updated immediately and persisted after a reload.
-- [ ] Notes — checklist items toggleable from rendered view
+- [x] Notes — checklist items toggleable from rendered view: clicking a checkbox in `NoteBody`'s
+  rendered (non-edit) view flips it and autosaves immediately (no Edit click needed), reusing the
+  same `openVersionId` coalescing mechanism autosave and restore already use. `toggleTaskAtIndex`
+  (`lib/notes/toggle-task.ts`) parses/re-serializes via the real `remark-parse`+`remark-gfm`
+  pipeline (same libraries `react-markdown` itself uses) rather than a hand-rolled regex — self-
+  review proved a first-draft regex miscounted ordered-list, blockquote-nested, and fenced-code-
+  block content; the AST-based rewrite guarantees "the Nth checkbox this function finds" and "the
+  Nth checkbox react-markdown renders" always agree. Self-review also caught the toggle handler
+  reading stale `item.description` instead of live `body` (could silently drop an unsaved edit),
+  and a missing `resetBaseline` call that could let the autosave hook's own debounce fire a
+  redundant, racing PATCH for the same change — both fixed. 322/322 unit/integration tests green
+  (7 new for `toggleTaskAtIndex`, extended `NoteBody`/`NoteEditor` coverage), typecheck clean, all
+  6 Playwright `@smoke` tests green (`e2e/notes.spec.ts` extended: click a checkbox directly from
+  the rendered view, confirm it checks immediately with no Edit click, and persists after reload).
+  Verified live in the browser (Claude-in-Chrome): found and fixed a real bug in this step — the
+  checkbox-index counter was a plain incrementing variable read during render, which React Strict
+  Mode (on by default in Next.js dev) double-invokes, silently double-counting and handing out the
+  wrong index; invisible in jsdom-based unit tests (no Strict Mode there). Fixed by memoizing the
+  index per hast node (`WeakMap`) instead of an incrementing counter, then reconfirmed live:
+  clicking either checkbox toggles only that one and persists through a reload.
 - [ ] Shared item behavior — tag (create/rename/delete/merge), favorite, archive
 - [ ] Shared item behavior — move between collections
 - [ ] Shared item behavior — trash / restore / permanent delete (cascades to collection delete)
