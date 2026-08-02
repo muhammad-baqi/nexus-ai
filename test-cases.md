@@ -125,3 +125,18 @@ leave them as a style reference; either is fine.)*
 - [x] `NoteEditor`'s "Cancel" button discards the draft and returns to view mode unchanged
 - [x] `NoteEditor` stays in edit mode with the draft intact when a save fails, showing the inline error (refined from the original plan's "click Edit again" framing — matches `CollectionCard`'s existing edit-form pattern of not auto-exiting on error)
 - [x] (Playwright `@smoke`, `e2e/notes.spec.ts` extended/renamed) Creating a note (lands in edit mode immediately), saving a body with a heading, bold text, and a checklist item renders real `<h1>`/`<strong>`/checkbox elements — both immediately after Save and again after a full page reload, not raw Markdown syntax; Edit still shows the raw source afterward.
+
+## Notes — Markdown source / WYSIWYG toggle (Day 3)
+- [x] `NoteRichTextEditor` initialized with a Markdown string covering headings, bold/italic/strike, lists, a task list, a link, and a blockquote renders the equivalent rich elements (not raw Markdown syntax) — proves the parse side of the `Markdown` extension is wired correctly
+- [x] `NoteRichTextEditor` round-trips: initialize with a Markdown string covering every supported content type, immediately read the serialized Markdown back out via its `onChange` callback, and confirm it's semantically equivalent to the input — proves parse and serialize both work, not just one direction
+- [x] Clicking the Bold toolbar button after `editor.commands.selectAll()` wraps the selected text in `**...**` in the serialized Markdown
+- [x] Selecting a language from the code-block `<select>` (shown only while the cursor is inside a code block) updates that block's `language` attribute, reflected in the serialized fenced-code-block markdown (` ```language `)
+- [x] The "Insert table" toolbar button inserts a table whose serialized Markdown is a valid GFM table; "Add row" (shown only while inside a table) increases the row count
+- [x] The Link toolbar button is disabled with no text selected, and enabled once text is selected; submitting the inline URL form applies a Markdown link (`[text](url)`) around the selection rather than navigating away
+- [x] The Image toolbar button's inline URL form inserts a Markdown image reference (`![](url)`) for an `http(s)` URL, and does nothing for a `javascript:` URL (self-review-requested regression case — `Image`, unlike `Link`, has no built-in URI validation)
+- [x] `Markdown.configure({ html: false })`: raw HTML typed into the editor is not executed as markup in the serialized output (regression case mirroring `NoteBody`'s existing raw-HTML-safety test)
+- [x] `NoteEditor` defaults to the Markdown (textarea) surface when entering edit mode, unchanged from before
+- [x] `NoteEditor`'s toggle switches from Markdown to Rich text and shows the same content, parsed
+- [x] `NoteEditor`'s toggle switches from Rich text back to Markdown and shows the same content, serialized back to the original Markdown text (not a stale/reverted snapshot) — the mount/unmount sync round-trip
+- [x] `NoteEditor`'s Save button works correctly when the last edit happened in Rich text mode (proves the continuous `onUpdate → setBody` sync while mounted, not just the toggle-boundary mount/unmount sync)
+- [x] (Playwright `@smoke`, `e2e/notes.spec.ts` extended) Create a note, switch to Rich text, use the toolbar to add a heading and bold text, switch back to Markdown and confirm the raw syntax is present, Save, reload, confirm the rendered view (`NoteBody`) shows real elements for both.

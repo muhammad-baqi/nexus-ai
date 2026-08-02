@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { NoteEditor } from "./note-editor";
@@ -138,5 +138,77 @@ describe("NoteEditor", () => {
 
     expect(await screen.findByText("boom")).toBeInTheDocument();
     expect(screen.getByDisplayValue("Draft title")).toBeInTheDocument();
+  });
+
+  it("defaults to the Markdown (textarea) surface when entering edit mode", async () => {
+    (fetch as ReturnType<typeof vi.fn>).mockResolvedValue(jsonResponse(baseItem));
+
+    render(<NoteEditor itemId="item-1" />);
+    await screen.findByRole("heading", { name: "Trip planning" });
+    fireEvent.click(screen.getByRole("button", { name: /^edit$/i }));
+
+    expect(screen.getByLabelText("Body").tagName).toBe("TEXTAREA");
+    expect(screen.getByRole("button", { name: "Markdown" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+  });
+
+  it("the toggle switches to the Rich text surface and shows the same content, parsed", async () => {
+    (fetch as ReturnType<typeof vi.fn>).mockResolvedValue(
+      jsonResponse({ ...baseItem, description: "# Heading\n\n**bold**" }),
+    );
+
+    render(<NoteEditor itemId="item-1" />);
+    await screen.findByRole("heading", { name: "Trip planning" });
+    fireEvent.click(screen.getByRole("button", { name: /^edit$/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Rich text" }));
+
+    expect(await screen.findByRole("heading", { level: 1, name: "Heading" })).toBeInTheDocument();
+    expect(screen.getByText("bold").tagName).toBe("STRONG");
+  });
+
+  it("toggling back to Markdown shows the same content, serialized back to equivalent Markdown text (not a stale snapshot)", async () => {
+    (fetch as ReturnType<typeof vi.fn>).mockResolvedValue(
+      jsonResponse({ ...baseItem, description: "# Heading\n\n**bold**" }),
+    );
+
+    render(<NoteEditor itemId="item-1" />);
+    await screen.findByRole("heading", { name: "Trip planning" });
+    fireEvent.click(screen.getByRole("button", { name: /^edit$/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Rich text" }));
+    await screen.findByRole("heading", { level: 1, name: "Heading" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Markdown" }));
+
+    const textarea = screen.getByLabelText("Body") as HTMLTextAreaElement;
+    expect(textarea.tagName).toBe("TEXTAREA");
+    expect(textarea.value).toContain("# Heading");
+    expect(textarea.value).toContain("**bold**");
+  });
+
+  it("Save works correctly while the Rich text surface is active", async () => {
+    (fetch as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(jsonResponse({ ...baseItem, description: "Packing list" }))
+      .mockResolvedValueOnce(
+        jsonResponse({ ...baseItem, title: "Trip planning", description: "Packing list" }),
+      );
+
+    render(<NoteEditor itemId="item-1" />);
+    await screen.findByRole("heading", { name: "Trip planning" });
+    fireEvent.click(screen.getByRole("button", { name: /^edit$/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Rich text" }));
+    await waitFor(() => expect(screen.getByLabelText("Body").tagName).not.toBe("TEXTAREA"));
+
+    fireEvent.click(screen.getByRole("button", { name: /^save$/i }));
+
+    await screen.findByRole("heading", { name: "Trip planning" });
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/items/item-1",
+      expect.objectContaining({
+        method: "PATCH",
+        body: JSON.stringify({ title: "Trip planning", description: "Packing list" }),
+      }),
+    );
   });
 });

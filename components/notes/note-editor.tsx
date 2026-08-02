@@ -7,7 +7,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { NoteBody } from "@/components/notes/note-body";
+import { NoteRichTextEditor } from "@/components/notes/note-rich-text-editor";
 import { DEFAULT_NOTE_TITLE } from "@/lib/validation/items";
+
+type EditSurface = "markdown" | "richtext";
 
 type Item = {
   id: string;
@@ -29,6 +32,7 @@ export function NoteEditor({ itemId }: Props) {
   const [item, setItem] = useState<Item | null>(null);
   const [loadError, setLoadError] = useState<string | undefined>();
   const [mode, setMode] = useState<"view" | "edit">("view");
+  const [editSurface, setEditSurface] = useState<EditSurface>("markdown");
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
   const [titleError, setTitleError] = useState<string | undefined>();
@@ -64,6 +68,7 @@ export function NoteEditor({ itemId }: Props) {
     setBody(item.description ?? "");
     setTitleError(undefined);
     setSaveError(undefined);
+    setEditSurface("markdown");
     setMode("edit");
   }
 
@@ -130,13 +135,39 @@ export function NoteEditor({ itemId }: Props) {
           )}
         </div>
         <div className="flex flex-col gap-1.5">
-          <Label htmlFor="note-body">Body</Label>
-          <Textarea
-            id="note-body"
-            value={body}
-            onChange={(e) => setBody(e.target.value)}
-            rows={16}
-          />
+          <div className="flex items-center justify-between">
+            <Label htmlFor="note-body">Body</Label>
+            <div className="flex items-center gap-1" role="group" aria-label="Editing surface">
+              <Button
+                type="button"
+                variant={editSurface === "markdown" ? "secondary" : "ghost"}
+                size="sm"
+                aria-pressed={editSurface === "markdown"}
+                onClick={() => setEditSurface("markdown")}
+              >
+                Markdown
+              </Button>
+              <Button
+                type="button"
+                variant={editSurface === "richtext" ? "secondary" : "ghost"}
+                size="sm"
+                aria-pressed={editSurface === "richtext"}
+                onClick={() => setEditSurface("richtext")}
+              >
+                Rich text
+              </Button>
+            </div>
+          </div>
+          {editSurface === "markdown" ? (
+            <Textarea
+              id="note-body"
+              value={body}
+              onChange={(e) => setBody(e.target.value)}
+              rows={16}
+            />
+          ) : (
+            <NoteRichTextEditor content={body} onChange={setBody} />
+          )}
         </div>
         {saveError && (
           <p className="text-destructive text-sm" role="alert">

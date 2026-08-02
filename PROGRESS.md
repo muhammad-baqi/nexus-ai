@@ -19,9 +19,10 @@ re-investigate only if it starts affecting Vercel too. `develop`/`staging`/`main
 Infra is now fully set up: two Vercel projects (staging → `staging`, production → `main`), two
 Supabase projects (`nexus-staging`, `nexus-prod`) with all 3 migrations applied to both.
 
-**Day 3 in progress (2/11)**: Notes — create/edit title+body, and Notes — rich formatting, both
-shipped — see below. `develop` is ahead of `staging`/`main` again as normal feature work resumes
-(Day 3 releases to staging only, not production, per `Roadmap.md`).
+**Day 3 in progress (3/11)**: Notes — create/edit title+body, Notes — rich formatting, and Notes —
+Markdown source / WYSIWYG toggle all shipped — see below. `develop` is ahead of `staging`/`main`
+again as normal feature work resumes (Day 3 releases to staging only, not production, per
+`Roadmap.md`).
 
 ---
 
@@ -264,7 +265,7 @@ CLI commands don't default to prod.
   `.claude/docs/git-workflow.md`. Day 2 QA gate (`.claude/docs/qa-checklist.md`) still to run
   before that promotion.
 
-## Day 3 — Knowledge Management — release Wednesday (staging only) (2/11)
+## Day 3 — Knowledge Management — release Wednesday (staging only) (3/11)
 
 - [x] Notes — create, edit title/body — `app/api/items` (list/create) + `app/api/items/:id`
   (get/update) against the existing `knowledge_items` table (type='note'); no new migration, RLS
@@ -298,7 +299,38 @@ CLI commands don't default to prod.
   against the "save in under 10s" promise — fixed to open freshly-created notes straight into
   edit mode. 248/248 unit/integration tests green (12 new), typecheck + lint clean, all 6
   Playwright `@smoke` tests green.
-- [ ] Notes — Markdown source / WYSIWYG toggle
+- [x] Notes — Markdown source / WYSIWYG toggle — `components/notes/note-rich-text-editor.tsx`
+  (new, Tiptap 3 via `@tiptap/react` + `tiptap-markdown` for Markdown ⇄ ProseMirror
+  serialization + `lowlight`/`@tiptap/extension-code-block-lowlight` for highlighted code
+  blocks, reusing the same `highlight.js` grammar set `NoteBody`'s `rehype-highlight` already
+  renders with). `NoteEditor` gained an explicit "Markdown" / "Rich text" toggle in edit mode —
+  both surfaces read/write the same `body` string; switching surfaces works via React mount/
+  unmount (the rich-text surface initializes fresh from the current Markdown each time it
+  mounts, and continuously syncs back on every edit while mounted), not imperative
+  `editor.commands.setContent` calls, which turned out to be simpler and avoids any cursor/
+  feedback-loop risk. Toolbar covers every content type in `Notes.md`'s "Supported content"
+  list: headings (H1–H3), bold/italic/strike, ordered/unordered/task lists, blockquote,
+  horizontal rule, code blocks with a language select, tables (insert + add/remove row/column),
+  and link/image — image is by-URL only (not upload-by-reference), same interim stand-in
+  `NoteBody` already documents pending Day 5's Image uploads. **New dependencies** (flagging per
+  CLAUDE.md): 12 `@tiptap/*` packages, `tiptap-markdown`, `lowlight` — no existing dependency
+  does contenteditable rich-text editing; this is Tiptap's standard, actively-maintained
+  extension set for exactly this MVP content list. Self-review (code-reviewer subagent) caught
+  a real gap and fixed it: `Image`'s `setImage`, unlike `Link`'s `setLink`, has zero built-in URI
+  validation, so a typed `javascript:` URL would have been stored verbatim in the note's
+  Markdown relying entirely on the read-side renderer's sanitizer — now validated via the same
+  `isAllowedUri` helper `@tiptap/extension-link` already uses internally. Also fixed an ARIA
+  role/children mismatch (`role="radiogroup"` on a pair of `aria-pressed` toggle buttons, which
+  aren't `role="radio"`) caught in the same pass. 280/280 unit/integration tests green (20 new:
+  8 for the new `note-rich-text-editor.test.tsx` covering parse/serialize round-trip, toolbar
+  commands, table/code-block/link/image behavior, and the `html:false` raw-HTML-safety
+  regression case; 4 new in `note-editor.test.tsx` for the toggle itself), typecheck clean, all
+  6 Playwright `@smoke` tests green (`e2e/notes.spec.ts` extended: authors a heading and bold
+  text via the real WYSIWYG toolbar in a live Chromium browser, confirms the Markdown surface
+  shows the equivalent raw syntax after switching back, Saves, and confirms the rendered view
+  persists it through a reload). Also manually driven live in the browser (Claude-in-Chrome
+  against the local Supabase stack): created a note, used the toolbar to build a heading, bold
+  text, and a checklist, saved, and confirmed the rendered view matched.
 - [ ] Notes — autosave (debounced, save-status indicator, retry on failure)
 - [ ] Notes — version history (view list, view a version, restore)
 - [ ] Notes — checklist items toggleable from rendered view
