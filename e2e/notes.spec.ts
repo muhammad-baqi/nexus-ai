@@ -158,4 +158,44 @@ test("create a note, edit title and body, and confirm formatting persists and re
   await page.goto("/collections");
   await page.getByRole("link", { name: "Inbox" }).click();
   await expect(page.getByRole("link", { name: "Trip planning" })).toBeVisible();
+
+  // Shared item behavior: favorite, archive, and tag (create/attach/detach) from the note editor
+  // itself, then confirm the collection's default list reflects the archive state — hidden by
+  // default, reachable again via "Show archived" — per Knowledge_Items.md.
+  await page.getByRole("link", { name: "Trip planning" }).click();
+
+  await page.getByRole("button", { name: "Favorite", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Unfavorite" })).toBeVisible();
+  await expect(page.locator('[aria-label="Favorited"]')).toBeVisible();
+
+  await page.getByLabel("Add tag").fill("travel");
+  await page.getByRole("button", { name: "Add" }).click();
+  await expect(page.getByText("travel", { exact: true })).toBeVisible();
+  await page.getByLabel("Add tag").fill("packing");
+  await page.getByRole("button", { name: "Add" }).click();
+  await expect(page.getByText("packing", { exact: true })).toBeVisible();
+
+  await page.getByRole("button", { name: "Remove tag packing" }).click();
+  await expect(page.getByText("packing", { exact: true })).not.toBeVisible();
+
+  await page.getByRole("button", { name: "Archive", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Unarchive" })).toBeVisible();
+  await expect(page.getByText("(Archived)")).toBeVisible();
+
+  await page.reload();
+  await expect(page.getByRole("button", { name: "Unfavorite" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Unarchive" })).toBeVisible();
+  await expect(page.getByText("travel", { exact: true })).toBeVisible();
+  await expect(page.getByText("packing", { exact: true })).not.toBeVisible();
+
+  // Back in the collection: archived items are excluded from the default list, and a "Show
+  // archived" toggle is the only way to reach one to unarchive it (Day 4's global archived
+  // filter doesn't exist yet).
+  await page.goto("/collections");
+  await page.getByRole("link", { name: "Inbox" }).click();
+  await expect(page.getByRole("link", { name: "Trip planning" })).not.toBeVisible();
+  await page.getByRole("button", { name: /show archived/i }).click();
+  const archivedLink = page.getByRole("link", { name: /Trip planning/ });
+  await expect(archivedLink).toBeVisible();
+  await expect(archivedLink).toContainText("(Archived)");
 });

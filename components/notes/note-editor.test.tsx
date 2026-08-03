@@ -44,6 +44,9 @@ const baseItem = {
   title: "Trip planning",
   description: "Packing list",
   updated_at: "2026-08-01T00:00:00.000Z",
+  is_favorite: false,
+  is_archived: false,
+  tags: [] as { id: string; name: string }[],
 };
 
 // Flushes pending promise microtasks (e.g. the initial GET's .then() chain) without depending
@@ -270,6 +273,84 @@ describe("NoteEditor", () => {
         }),
       }),
     );
+  });
+
+  describe("favorite/archive/tags", () => {
+    it("renders TagInput with the note's current tags", async () => {
+      (fetch as ReturnType<typeof vi.fn>).mockResolvedValue(
+        jsonResponse({ ...baseItem, tags: [{ id: "tag-1", name: "travel" }] }),
+      );
+
+      render(<NoteEditor itemId="item-1" />);
+      await flush();
+
+      expect(screen.getByText("travel")).toBeInTheDocument();
+      expect(screen.getByLabelText("Add tag")).toBeInTheDocument();
+    });
+
+    it("toggling Favorite in view mode PATCHes is_favorite and updates the label", async () => {
+      (fetch as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce(jsonResponse(baseItem))
+        .mockResolvedValueOnce(jsonResponse({ ...baseItem, is_favorite: true }));
+
+      render(<NoteEditor itemId="item-1" />);
+      await flush();
+
+      fireEvent.click(screen.getByRole("button", { name: /^favorite$/i }));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+
+      expect(fetch).toHaveBeenCalledWith(
+        "/api/items/item-1",
+        expect.objectContaining({
+          method: "PATCH",
+          body: JSON.stringify({ is_favorite: true }),
+        }),
+      );
+      expect(screen.getByRole("button", { name: /^unfavorite$/i })).toBeInTheDocument();
+      expect(screen.getByLabelText("Favorited")).toBeInTheDocument();
+    });
+
+    it("toggling Archive in edit mode PATCHes is_archived", async () => {
+      (fetch as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce(jsonResponse(baseItem))
+        .mockResolvedValueOnce(jsonResponse({ ...baseItem, is_archived: true }));
+
+      render(<NoteEditor itemId="item-1" />);
+      await flush();
+      fireEvent.click(screen.getByRole("button", { name: /^edit$/i }));
+
+      fireEvent.click(screen.getByRole("button", { name: /^archive$/i }));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+
+      expect(fetch).toHaveBeenCalledWith(
+        "/api/items/item-1",
+        expect.objectContaining({
+          method: "PATCH",
+          body: JSON.stringify({ is_archived: true }),
+        }),
+      );
+      expect(screen.getByRole("button", { name: /^unarchive$/i })).toBeInTheDocument();
+    });
+
+    it("shows an inline error when a favorite/archive toggle fails", async () => {
+      (fetch as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce(jsonResponse(baseItem))
+        .mockResolvedValueOnce(jsonResponse({ error: { message: "boom" } }, false));
+
+      render(<NoteEditor itemId="item-1" />);
+      await flush();
+
+      fireEvent.click(screen.getByRole("button", { name: /^favorite$/i }));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+
+      expect(screen.getByRole("alert")).toHaveTextContent("boom");
+    });
   });
 
   describe("version history", () => {

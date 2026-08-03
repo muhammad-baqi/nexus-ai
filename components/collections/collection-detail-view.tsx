@@ -16,6 +16,8 @@ type Item = {
   id: string;
   title: string;
   updated_at: string;
+  is_favorite: boolean;
+  is_archived: boolean;
 };
 
 type Status = "loading" | "loaded" | "error";
@@ -31,6 +33,12 @@ export function CollectionDetailView({ collectionId }: Props) {
   const [status, setStatus] = useState<Status>("loading");
   const [createError, setCreateError] = useState<string | undefined>();
   const [isCreating, setIsCreating] = useState(false);
+  // Archived items are hidden from this default view (Knowledge_Items.md: archiving "removes
+  // an item from default Collection views") but stay reachable here via this toggle — Day 4's
+  // global archived filter doesn't exist yet, and hiding with no way back would strand an
+  // archived item with no path to unarchive it. Mirrors the discoverability pattern the
+  // existing Trash view already established.
+  const [showArchived, setShowArchived] = useState(false);
 
   const load = useCallback(async () => {
     setStatus("loading");
@@ -91,6 +99,9 @@ export function CollectionDetailView({ collectionId }: Props) {
     );
   }
 
+  const archivedCount = items.filter((item) => item.is_archived).length;
+  const visibleItems = showArchived ? items : items.filter((item) => !item.is_archived);
+
   return (
     <div className="flex flex-col gap-6">
       <div className="flex items-center justify-between gap-4">
@@ -111,16 +122,37 @@ export function CollectionDetailView({ collectionId }: Props) {
         </p>
       )}
 
-      {items.length === 0 ? (
+      {archivedCount > 0 && (
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="self-start"
+          aria-pressed={showArchived}
+          onClick={() => setShowArchived((show) => !show)}
+        >
+          {showArchived ? "Hide archived" : `Show archived (${archivedCount})`}
+        </Button>
+      )}
+
+      {visibleItems.length === 0 ? (
         <p className="text-muted-foreground text-sm">
-          No notes yet — create one above.
+          {items.length === 0
+            ? "No notes yet — create one above."
+            : "No notes to show — all notes in this collection are archived."}
         </p>
       ) : (
         <ul className="flex flex-col gap-2">
-          {items.map((item) => (
+          {visibleItems.map((item) => (
             <li key={item.id} className="rounded-lg border border-border p-3">
               <Link href={`/items/${item.id}`} className="font-medium hover:underline">
+                {item.is_favorite && <span aria-label="Favorited">★ </span>}
                 {item.title || "Untitled Note"}
+                {item.is_archived && (
+                  <span className="text-muted-foreground ml-2 text-sm font-normal">
+                    (Archived)
+                  </span>
+                )}
               </Link>
             </li>
           ))}

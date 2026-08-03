@@ -9,6 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { NoteBody } from "@/components/notes/note-body";
 import { NoteRichTextEditor } from "@/components/notes/note-rich-text-editor";
 import { NoteVersionHistory } from "@/components/notes/note-version-history";
+import { TagInput, type ItemTag } from "@/components/notes/tag-input";
 import { type AutosaveStatus, useNoteAutosave } from "@/components/notes/use-note-autosave";
 import { toggleTaskAtIndex } from "@/lib/notes/toggle-task";
 import { DEFAULT_NOTE_TITLE } from "@/lib/validation/items";
@@ -27,7 +28,14 @@ type Item = {
   title: string;
   description: string | null;
   updated_at: string;
+  is_favorite: boolean;
+  is_archived: boolean;
+  tags: ItemTag[];
 };
+
+// What GET/PATCH /api/items/:id actually send: `tags` is `null` specifically when the server's
+// tags read failed (not when the item genuinely has none), so it can't just be typed as ItemTag[].
+type ServerItem = Omit<Item, "tags"> & { tags: ItemTag[] | null };
 
 type Props = {
   itemId: string;
@@ -36,6 +44,13 @@ type Props = {
 async function parseErrorMessage(response: Response, fallback: string) {
   const body = await response.json().catch(() => null);
   return body?.error?.message ?? fallback;
+}
+
+// Falls back to the previous local tags (or [] with no previous item, i.e. the initial load)
+// whenever the server reports `tags: null` — a failed post-mutation tags read shouldn't wipe a
+// list the user can already see (self-review-caught gap).
+function mergeServerItem(prev: Item | null, updated: ServerItem): Item {
+  return { ...updated, tags: updated.tags ?? prev?.tags ?? [] };
 }
 
 export function NoteEditor({ itemId }: Props) {
@@ -85,13 +100,13 @@ export function NoteEditor({ itemId }: Props) {
         throw new Error("autosave failed");
       }
 
-      const updated: Item & { versionId: string | null } = await response.json();
+      const updated: ServerItem & { versionId: string | null } = await response.json();
       if (saveGenerationRef.current !== generation) {
         // A restore landed while this request was in flight — it already reflects newer state
         // than this (now-stale) response does; don't let it overwrite that.
         return;
       }
-      setItem(updated);
+      setItem((prev) => mergeServerItem(prev, updated));
       openVersionIdRef.current = updated.versionId;
     },
   );
@@ -100,9 +115,9 @@ export function NoteEditor({ itemId }: Props) {
     let cancelled = false;
     fetch(`/api/items/${itemId}`)
       .then((res) => (res.ok ? res.json() : Promise.reject(new Error("load failed"))))
-      .then((data: Item) => {
+      .then((data: ServerItem) => {
         if (cancelled) return;
-        setItem(data);
+        setItem(mergeServerItem(null, data));
         setTitle(data.title);
         setBody(data.description ?? "");
         resetBaseline({ title: data.title, body: data.description ?? "" });
@@ -199,15 +214,53 @@ export function NoteEditor({ itemId }: Props) {
       return;
     }
 
-    const updated: Item & { versionId: string | null } = await response.json();
+    const updated: ServerItem & { versionId: string | null } = await response.json();
     if (saveGenerationRef.current !== generation) {
       // Something newer (another toggle, a restore) has already landed — don't overwrite it.
       return;
     }
-    setItem(updated);
+    setItem((prev) => mergeServerItem(prev, updated));
     setBody(updated.description ?? "");
     openVersionIdRef.current = updated.versionId;
     resetBaseline({ title, body: updated.description ?? "" });
+  }
+
+  // Favorite/archive are simple column toggles — unlike the checklist toggle above, they never
+  // touch description/note_versions, so no openVersionIdRef bookkeeping is needed here.
+  async function toggleFavorite() {
+    if (!item) return;
+    setToggleError(undefined);
+    const response = await fetch(`/api/items/${itemId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ is_favorite: !item.is_favorite }),
+    });
+    if (!response.ok) {
+      setToggleError(await parseErrorMessage(response, "Something went wrong."));
+      return;
+    }
+    const updated: ServerItem & { versionId: string | null } = await response.json();
+    setItem((prev) => mergeServerItem(prev, updated));
+  }
+
+  async function toggleArchived() {
+    if (!item) return;
+    setToggleError(undefined);
+    const response = await fetch(`/api/items/${itemId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ is_archived: !item.is_archived }),
+    });
+    if (!response.ok) {
+      setToggleError(await parseErrorMessage(response, "Something went wrong."));
+      return;
+    }
+    const updated: ServerItem & { versionId: string | null } = await response.json();
+    setItem((prev) => mergeServerItem(prev, updated));
+  }
+
+  function handleTagsChange(tags: ItemTag[]) {
+    setItem((prev) => (prev ? { ...prev, tags } : prev));
   }
 
   if (loadError) {
@@ -257,6 +310,7 @@ export function NoteEditor({ itemId }: Props) {
             </p>
           )}
         </div>
+        <TagInput itemId={itemId} tags={item.tags} onTagsChange={handleTagsChange} />
         <div className="flex flex-col gap-1.5">
           <div className="flex items-center justify-between">
             <Label htmlFor="note-body">Body</Label>
@@ -292,10 +346,21 @@ export function NoteEditor({ itemId }: Props) {
             <NoteRichTextEditor content={body} onChange={setBody} />
           )}
         </div>
+        {toggleError && (
+          <p className="text-destructive text-sm" role="alert">
+            {toggleError}
+          </p>
+        )}
         {statusIndicator}
         <div className="flex items-center gap-2">
           <Button type="button" variant="outline" onClick={finishEditing} disabled={!!titleError}>
             Done
+          </Button>
+          <Button type="button" variant="outline" onClick={toggleFavorite}>
+            {item.is_favorite ? "Unfavorite" : "Favorite"}
+          </Button>
+          <Button type="button" variant="outline" onClick={toggleArchived}>
+            {item.is_archived ? "Unarchive" : "Archive"}
           </Button>
           <Button
             type="button"
@@ -314,10 +379,22 @@ export function NoteEditor({ itemId }: Props) {
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-start justify-between gap-4">
-        <h1 className="text-2xl font-semibold">{item.title}</h1>
+        <h1 className="text-2xl font-semibold">
+          {item.is_favorite && <span aria-label="Favorited">★ </span>}
+          {item.title}
+          {item.is_archived && (
+            <span className="text-muted-foreground ml-2 text-sm font-normal">(Archived)</span>
+          )}
+        </h1>
         <div className="flex items-center gap-2">
           <Button type="button" variant="outline" size="sm" onClick={startEditing}>
             Edit
+          </Button>
+          <Button type="button" variant="outline" size="sm" onClick={toggleFavorite}>
+            {item.is_favorite ? "Unfavorite" : "Favorite"}
+          </Button>
+          <Button type="button" variant="outline" size="sm" onClick={toggleArchived}>
+            {item.is_archived ? "Unarchive" : "Archive"}
           </Button>
           <Button
             type="button"
@@ -330,6 +407,7 @@ export function NoteEditor({ itemId }: Props) {
           </Button>
         </div>
       </div>
+      <TagInput itemId={itemId} tags={item.tags} onTagsChange={handleTagsChange} />
       {statusIndicator}
       {toggleError && (
         <p className="text-destructive text-sm" role="alert">

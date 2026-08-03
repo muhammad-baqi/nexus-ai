@@ -88,4 +88,47 @@ describe("CollectionDetailView", () => {
 
     expect(await screen.findByRole("alert")).toHaveTextContent(/something went wrong/i);
   });
+
+  it("hides archived items by default; 'Show archived' reveals them with an (Archived) label", async () => {
+    (fetch as ReturnType<typeof vi.fn>).mockImplementation((url: string) => {
+      if (url.startsWith("/api/collections/")) return Promise.resolve(jsonResponse(baseCollection));
+      return Promise.resolve(
+        jsonResponse({
+          items: [
+            { id: "item-1", title: "Active note", updated_at: "", is_favorite: false, is_archived: false },
+            { id: "item-2", title: "Old note", updated_at: "", is_favorite: false, is_archived: true },
+          ],
+        }),
+      );
+    });
+
+    render(<CollectionDetailView collectionId="col-1" />);
+    await screen.findByText("Active note");
+
+    expect(screen.queryByText("Old note")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /show archived \(1\)/i })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /show archived \(1\)/i }));
+
+    expect(screen.getByText("Old note")).toBeInTheDocument();
+    expect(screen.getByText("(Archived)")).toBeInTheDocument();
+  });
+
+  it("shows a star marker for a favorited item", async () => {
+    (fetch as ReturnType<typeof vi.fn>).mockImplementation((url: string) => {
+      if (url.startsWith("/api/collections/")) return Promise.resolve(jsonResponse(baseCollection));
+      return Promise.resolve(
+        jsonResponse({
+          items: [
+            { id: "item-1", title: "Starred note", updated_at: "", is_favorite: true, is_archived: false },
+          ],
+        }),
+      );
+    });
+
+    render(<CollectionDetailView collectionId="col-1" />);
+    await screen.findByText("Starred note");
+
+    expect(screen.getByLabelText("Favorited")).toBeInTheDocument();
+  });
 });

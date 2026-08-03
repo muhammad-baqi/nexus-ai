@@ -237,3 +237,101 @@ in-progress draft" case above, just for the toggle path instead of the reopen-Ed
 mode's `NoteBody` now also renders `body` instead of `item.description`, for the same reason.
 
 - [x] (Playwright `@smoke`, `e2e/notes.spec.ts` extended) From the rendered (non-edit) view of a note with an existing checklist, click a checkbox directly — no Edit click — confirm it becomes checked immediately, reload, confirm it persisted.
+
+## Shared item behavior — tag (create/rename/delete/merge), favorite, archive (Day 3)
+
+> Self-review (code-reviewer subagent) caught a real gap: `PATCH`/`GET /api/items/:id` and the
+> attach/detach tag routes originally coalesced a failed tags re-read to `tags: []` — on a
+> transient failure right after a successful mutation (including every autosave!), that silently
+> reported "this item now has zero tags" and the UI would wipe the tag chips even though nothing
+> was actually lost server-side. Fixed by passing the read failure through as `tags: null`
+> (distinct from a genuinely-empty `[]`) end-to-end; the client (`NoteEditor`'s `mergeServerItem`,
+> `TagInput`'s add/remove handlers) treats `null` as "unconfirmed, keep what's already shown"
+> instead of overwriting good local state. Also added `lib/items/tags.test.ts` (not in the
+> original plan) covering `getOrCreateTag`'s concurrent-insert race-retry path, which self-review
+> flagged as the riskiest untested logic in this diff.
+
+`lib/validation/tags.test.ts`:
+- [x] `tagNameSchema` rejects empty/whitespace-only and >50-char names
+- [x] `mergeTagsSchema` rejects `source_tag_id === target_tag_id`
+
+`lib/items/tags.test.ts` (added during self-review):
+- [x] `fetchItemTags` flattens joined rows into a sorted list; returns `[]` for genuinely no tags, `null` (+ logs) on a query failure
+- [x] `getOrCreateTag` reuses an existing case-insensitive match without inserting; creates a new tag when none matches; recovers from a concurrent-insert race (`23505`) by re-fetching; returns `null` (+ logs) on a non-race insert failure or a failed initial lookup
+
+`app/api/items/[id]/route.test.ts` (extended):
+- [x] `PATCH` accepts `is_favorite`/`is_archived` alone or together with other fields
+- [x] `GET` response includes a `tags` array reflecting currently-attached tags, empty array when none
+- [x] `GET`/`PATCH` return `tags: null` (not `[]`) when the tags read fails after an otherwise-successful request (regression for the self-review fix above)
+
+`app/api/tags/route.test.ts`:
+- [x] `GET` returns only the caller's tags, sorted by name; empty array when none
+- [x] `GET` requires auth (401)
+
+`app/api/tags/[id]/route.test.ts`:
+- [x] `PATCH` renames; 400 invalid id/name; 404 not owned/doesn't exist; 409 case-insensitive duplicate name
+- [x] `DELETE` removes the tag and detaches it from every item that had it (join rows gone); 404 not owned/doesn't exist
+
+`app/api/tags/merge/route.test.ts`:
+- [x] 400 when `source_tag_id === target_tag_id`; 404 when either tag isn't owned/doesn't exist
+- [x] merging reassigns every item from source to target and deletes the source tag
+- [x] merging when an item already has both tags doesn't error (dedupe, not a PK-conflict 500)
+- [x] a failure deleting the source tag after reassignment logs and returns 500, not a silent "success"
+
+`app/api/items/[id]/tags/route.test.ts`:
+- [x] `POST` with a brand-new name creates the tag and attaches it
+- [x] `POST` with a name matching an existing tag case-insensitively reuses it (no duplicate tag row) and attaches it
+- [x] `POST` attaching an already-attached tag is a no-op success, not an error
+- [x] 404 when the item isn't owned/doesn't exist/is trashed
+- [x] still returns 201 with the attached tag when the post-attach tags re-read fails (regression)
+
+`app/api/items/[id]/tags/[tagId]/route.test.ts`:
+- [x] `DELETE` detaches the tag; item's other tags untouched
+- [x] `DELETE` on a tag that isn't attached returns success (idempotent), not 404
+- [x] 404 when the item isn't owned/doesn't exist
+- [x] still returns 200 with `tags: null` when the post-detach tags re-read fails (regression)
+
+`components/notes/tag-input.test.tsx`:
+- [x] renders existing tags as chips
+- [x] adding a tag (Enter or Add button) calls the attach endpoint and shows the new chip optimistically; rolls back + shows an error on failure
+- [x] removing a tag (chip "×") calls the detach endpoint and removes it optimistically; rolls back + shows an error on failure
+- [x] adding/removing when the server reports `tags: null` merges/keeps the local change instead of clobbering it (regression)
+
+`components/notes/note-editor.test.tsx` (extended):
+- [x] Favorite/Archive buttons toggle state and PATCH the expected body, in both view and edit mode
+- [x] `TagInput` is rendered with the note's current tags
+
+`components/collections/collection-detail-view.test.tsx` (extended):
+- [x] archived items are hidden from the default list; "Show archived" reveals them with an "(Archived)" label
+- [x] favorited items show the "★" marker
+
+`components/tags/tag-management-view.test.tsx`:
+- [x] lists tags; rename succeeds and reflects immediately; duplicate-name rename shows inline error
+- [x] delete removes the tag from the list after confirmation
+- [x] merge (select target + submit) removes the source tag from the list
+
+`components/layout/app-nav.test.tsx` (extended):
+- [x] links to the new `/tags` page
+
+- [x] `e2e/notes.spec.ts` extended with the favorite/archive/tag/"Show archived" assertions (code
+      written, appended after the existing version-history flow). **Not confirmed green by an
+      actual Playwright run**: the existing (pre-this-feature) version-history section of this
+      same spec fails in this local Docker environment independent of any change here — reproduced
+      on a clean `develop` checkout with zero diff applied (`git stash -u`, re-ran, same failure at
+      a different assertion in the same block). Given the day's "known local environment quirk"
+      precedent (Turbopack dev-server staleness, documented repeatedly in `PROGRESS.md`), this is
+      treated the same way: a pre-existing local-only gap, not a regression, not re-diagnosed here.
+      The functionality itself (favorite, archive, tag attach/detach/rename/delete/merge,
+      collection archived-hide/show) was instead verified live against the real local Supabase
+      stack via direct `fetch()` calls from an authenticated browser tab (Claude-in-Chrome) —
+      create note → favorite → archive → attach two tags → detach one → re-fetch confirms all
+      four states persisted; collection list endpoint confirms `is_favorite`/`is_archived` are
+      present per item (what `collection-detail-view.tsx`'s hide/show-archived logic reads); tag
+      rename and a merge where the item already carried *both* tags before merging (the dedupe
+      case self-review flagged) both confirmed correct against real Postgres, not mocks.
+
+RLS — verified live against PostgREST with a second real account (`day3-rls-user2@...`), not just
+mocked: its token gets `[]` reading the first account's item directly, `[]` (0 rows, silent) on a
+PATCH attempting to favorite that item or rename the first account's tag, and an explicit `42501`
+row-level-security-violation 403 attempting to attach the first account's tag to the first
+account's item.

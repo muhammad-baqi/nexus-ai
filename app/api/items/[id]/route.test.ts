@@ -100,7 +100,44 @@ describe("GET /api/items/:id", () => {
       id: VALID_ID,
       title: "Trip planning",
       description: "Packing list",
+      tags: [],
     });
+  });
+
+  it("includes the item's currently-attached tags", async () => {
+    getUser.mockResolvedValue({ data: { user: { id: "user-1" } } });
+    queueResponse("knowledge_items", {
+      data: { id: VALID_ID, title: "Trip planning", description: "Packing list" },
+      error: null,
+    });
+    queueResponse("knowledge_item_tags", {
+      data: [{ tags: { id: "tag-2", name: "travel" } }, { tags: { id: "tag-1", name: "packing" } }],
+      error: null,
+    });
+
+    const response = await GET(requestFor("GET"), { params });
+
+    expect(await response.json()).toMatchObject({
+      tags: [
+        { id: "tag-1", name: "packing" },
+        { id: "tag-2", name: "travel" },
+      ],
+    });
+  });
+
+  it("returns tags: null (not []) when the tags read fails, so the caller can tell 'unconfirmed' from 'genuinely none'", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    getUser.mockResolvedValue({ data: { user: { id: "user-1" } } });
+    queueResponse("knowledge_items", {
+      data: { id: VALID_ID, title: "Trip planning", description: "Packing list" },
+      error: null,
+    });
+    queueResponse("knowledge_item_tags", { data: null, error: { message: "boom" } });
+
+    const response = await GET(requestFor("GET"), { params });
+
+    expect(await response.json()).toMatchObject({ tags: null });
+    consoleError.mockRestore();
   });
 });
 
@@ -167,9 +204,49 @@ describe("PATCH /api/items/:id", () => {
       id: VALID_ID,
       title: "Trip planning",
       description: "Untouched",
+      tags: [],
       versionId: null,
     });
     expect(fromCalls.note_versions).toBeUndefined();
+  });
+
+  it("accepts is_favorite/is_archived alone or together with other fields", async () => {
+    queueResponse("knowledge_items", {
+      data: { id: VALID_ID, title: "Trip planning", is_favorite: true, is_archived: false },
+      error: null,
+    });
+
+    const response = await PATCH(requestFor("PATCH", { is_favorite: true }), { params });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ is_favorite: true });
+
+    queueResponse("knowledge_items", {
+      data: { id: VALID_ID, title: "Trip planning", is_favorite: true, is_archived: true },
+      error: null,
+    });
+
+    const response2 = await PATCH(
+      requestFor("PATCH", { title: "Trip planning", is_archived: true }),
+      { params },
+    );
+
+    expect(response2.status).toBe(200);
+    expect(await response2.json()).toMatchObject({ is_favorite: true, is_archived: true });
+  });
+
+  it("returns tags: null (not []) when the post-update tags read fails", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    queueResponse("knowledge_items", {
+      data: { id: VALID_ID, title: "Trip planning", is_favorite: true },
+      error: null,
+    });
+    queueResponse("knowledge_item_tags", { data: null, error: { message: "boom" } });
+
+    const response = await PATCH(requestFor("PATCH", { is_favorite: true }), { params });
+
+    expect(await response.json()).toMatchObject({ tags: null });
+    consoleError.mockRestore();
   });
 
   it("returns 500 and logs on an update failure", async () => {

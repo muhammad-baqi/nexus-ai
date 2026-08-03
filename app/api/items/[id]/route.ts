@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 
+import { fetchItemTags } from "@/lib/items/tags";
 import { requireUser } from "@/lib/supabase/require-user";
 import { createClient } from "@/lib/supabase/server";
 import { itemIdSchema, updateItemSchema } from "@/lib/validation/items";
@@ -47,7 +48,12 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
     );
   }
 
-  return NextResponse.json(data);
+  // tags is `null` only when the read itself failed (fetchItemTags logs the cause) — passed
+  // through as `null` rather than coalesced to `[]`, so the client can tell "this item genuinely
+  // has no tags" from "couldn't confirm" and avoid overwriting a good local list with a
+  // misleadingly empty one (self-review-caught gap).
+  const tags = await fetchItemTags(supabase, id);
+  return NextResponse.json({ ...data, tags });
 }
 
 // Inserts a new note_versions row, or updates the caller-specified *currently open* one in
@@ -171,5 +177,8 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
     versionId = await writeNoteVersion(supabase, id, data.description, openVersionId ?? null);
   }
 
-  return NextResponse.json({ ...data, versionId });
+  // See the GET handler above: `null` (read failed) is passed through distinctly from `[]`
+  // (genuinely no tags) so the client doesn't clobber its tag list on every autosave/toggle.
+  const tags = await fetchItemTags(supabase, id);
+  return NextResponse.json({ ...data, tags, versionId });
 }
