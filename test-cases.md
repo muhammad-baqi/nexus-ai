@@ -380,3 +380,89 @@ actually backed by `collections`' own `owner_id = auth.uid()` RLS policy already
 `001_initial_schema.sql`), and attempting to move user A's item into user A's own Inbox affected 0
 rows (existing `knowledge_items` RLS, unchanged by this feature, already blocks it). Re-fetching
 user A's item afterward confirmed it was untouched by B's attempt.
+
+## Shared item behavior — trash / restore / permanent delete (Day 3)
+
+**Scope deviations from the original plan below**, both discovered mid-implementation:
+1. Trash listing is a **unified `GET /api/trash`** (items + collections in one response), per
+   `docs/03_Architecture/API_Design.md`'s Trash section, not `GET /api/items?view=trashed` — the
+   `view` query param was removed from `/api/items` entirely (it never shipped a real caller
+   besides the old Trash view). `TrashView` renders two grouped sections ("Collections" /
+   "Items"); collection rows restore via the existing `POST /api/collections/:id/restore`
+   (collections have no permanent-delete route, only items do, per `Knowledge_Items.md`).
+2. Item restore's re-home target isn't just "the Inbox collection": Collections are renamable
+   (Day 2), so a user may have renamed their actual Inbox — falling through to "no collection to
+   restore into" in that case would be a real dead end, not just a theoretical one. Restore now
+   falls back to the caller's oldest surviving collection when no collection named "Inbox" is
+   found, before giving up. Since the fallback doesn't always land in Inbox, the route also
+   returns the actual target collection's name (`rehomedToCollectionName`) so `TrashedItemRow`'s
+   message names where the item really went instead of assuming "Inbox".
+
+**Self-review (code-reviewer subagent) caught one real gap, fixed**: `POST
+/api/collections/:id/restore` only cleared the collection's own `deleted_at` — it never restored
+the items that were cascade-trashed with it by `DELETE /api/collections/:id` (which stamps a
+collection's items with its own `deleted_at` timestamp). This is a named acceptance criterion for
+this exact feature ("cascades to collection delete" in `PROGRESS.md`), and the gap was real and
+reachable: deleting a Collection with items, then restoring it from Trash, silently left every one
+of its items stranded in Trash under a now-live collection. Fixed by capturing the collection's
+`deleted_at` before clearing it, then restoring only the `knowledge_items` rows that share that
+exact timestamp (not items the caller had trashed individually before or after) — mirrors
+`DELETE`'s own cascade pattern, including surfacing a partial cascade failure via
+`itemCascadeIncomplete` rather than a silent no-op. New route-level tests plus a new
+`e2e/trash.spec.ts` case cover it (below).
+
+`app/api/items/[id]/route.test.ts` (extended, `DELETE`):
+- [x] `DELETE` soft-deletes (sets `deleted_at`), returns the updated item
+- [x] `DELETE` on an already-trashed/not-owned/nonexistent item returns 404 `not_found`
+
+`app/api/items/[id]/restore/route.test.ts` (new):
+- [x] restores in place (`deleted_at: null`, `collection_id` unchanged) when the original
+      collection is still live, reports `rehomed: false`
+- [x] re-homes into the caller's "Inbox" collection and reports `rehomed: true` when the original
+      `collection_id` is itself trashed or no longer exists
+- [x] falls back to the caller's oldest surviving collection when no collection named "Inbox" can
+      be found (e.g. it was renamed), reports `rehomed: true`
+- [x] 404 `not_found` when the item isn't currently trashed, isn't owned, or doesn't exist
+- [x] a genuine "no Inbox and no other live collection either" case (should be unreachable in
+      practice) returns a clear 500, not a silent no-op
+
+`app/api/items/[id]/permanent/route.test.ts` (new):
+- [x] hard-deletes an item that is currently trashed
+- [x] 404 `not_found` when the item isn't currently trashed (mirrors the restore guard), isn't
+      owned, or doesn't exist
+
+`app/api/trash/route.test.ts` (new):
+- [x] returns the caller's trashed items and trashed collections together in one response
+- [x] 401 with no session; 500 + log on a query failure (either half)
+
+`app/api/collections/[id]/restore/route.test.ts` (extended):
+- [x] 404 `not_found` when the collection isn't in Trash; 500 + log on a non-404 lookup/update
+      failure
+- [x] restores the collection and cascades restore to the items trashed with it (matched by the
+      shared `deleted_at` timestamp)
+- [x] still returns 200 but flags `itemCascadeIncomplete` if the item cascade fails
+
+`components/notes/note-editor.test.tsx` (extended):
+- [x] "Move to Trash" shows an inline confirm; Cancel makes no request
+- [x] confirming DELETEs the item and navigates to its collection detail page
+
+`components/notes/trashed-item-row.test.tsx` (new):
+- [x] Restore calls the restore endpoint and reports success via a callback; names the actual
+      target collection when the response's `rehomed` is true (both the Inbox case and the
+      oldest-surviving-collection fallback case), a plain restored message otherwise
+- [x] Permanently Delete requires its own inline confirmation before calling the permanent-delete
+      endpoint
+
+`components/notes/trash-view.test.tsx` (new):
+- [x] fetches the unified `GET /api/trash` endpoint, renders both trashed items and collections;
+      empty state "Trash is empty." only when both lists are empty
+- [x] a restored/permanently-deleted item row, or a restored collection row, is removed from the
+      list
+
+- [x] New `e2e/trash.spec.ts` `@smoke`: create a note, trash it from the editor, confirm it's gone
+      from its collection, visit `/trash`, restore it, confirm it's back in the collection, trash
+      it again, permanently delete it from `/trash`, confirm it's gone for good.
+- [x] Second `e2e/trash.spec.ts` `@smoke` case (added after self-review's cascade-restore finding):
+      create a collection with one note in it, delete the collection (cascade-trashes the note
+      too), visit `/trash` and confirm both the collection and the note show up, restore the
+      collection, confirm the note is back inside it.

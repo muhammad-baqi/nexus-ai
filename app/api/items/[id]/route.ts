@@ -199,3 +199,37 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
   const tags = await fetchItemTags(supabase, id);
   return NextResponse.json({ ...data, tags, versionId });
 }
+
+export async function DELETE(_request: NextRequest, { params }: RouteParams) {
+  const { id } = await params;
+  if (!itemIdSchema.safeParse(id).success) return invalidIdResponse();
+
+  const supabase = await createClient();
+  const { user, response } = await requireUser(supabase);
+  if (!user) return response;
+
+  const { data, error } = await supabase
+    .from("knowledge_items")
+    .update({ deleted_at: new Date().toISOString() })
+    .eq("id", id)
+    .eq("owner_id", user.id)
+    .is("deleted_at", null)
+    .select()
+    .single();
+
+  if (error) {
+    if (error.code === NO_ROWS_CODE) {
+      return NextResponse.json(
+        { error: { code: "not_found", message: "This item was already removed." } },
+        { status: 404 },
+      );
+    }
+    console.error("[api/items/:id] delete failed:", error);
+    return NextResponse.json(
+      { error: { code: "delete_failed", message: "Something went wrong deleting the item." } },
+      { status: 500 },
+    );
+  }
+
+  return NextResponse.json(data);
+}

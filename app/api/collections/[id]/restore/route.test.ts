@@ -6,39 +6,32 @@ const VALID_ID = "123e4567-e89b-12d3-a456-426614174000";
 
 type ResolvedValue = { data: unknown; error: unknown };
 
-interface QueryBuilder {
-  update: ReturnType<typeof vi.fn>;
-  eq: ReturnType<typeof vi.fn>;
-  not: ReturnType<typeof vi.fn>;
-  select: ReturnType<typeof vi.fn>;
-  single: ReturnType<typeof vi.fn>;
-  resolveWith: (value: ResolvedValue) => QueryBuilder;
-  then: (resolve: (value: ResolvedValue) => void) => void;
+// Per-table FIFO queue: the route makes several distinct calls (trashed-at lookup, the restore
+// update, the item cascade update), each needing its own queued response.
+let queues: Record<string, ResolvedValue[]>;
+
+function queueResponse(table: string, value: ResolvedValue) {
+  (queues[table] ??= []).push(value);
 }
 
-function createQueryBuilder(): QueryBuilder {
-  let resolvedValue: ResolvedValue = { data: null, error: null };
-  const builder: QueryBuilder = {
-    update: vi.fn(() => builder),
-    eq: vi.fn(() => builder),
-    not: vi.fn(() => builder),
-    select: vi.fn(() => builder),
-    single: vi.fn(() => builder),
-    resolveWith: (value) => {
-      resolvedValue = value;
-      return builder;
-    },
-    then: (resolve) => resolve(resolvedValue),
+function createQueryBuilder(table: string) {
+  const builder: Record<string, unknown> = {};
+  const chainable = ["select", "update", "eq", "not"];
+  for (const method of chainable) {
+    builder[method] = vi.fn(() => builder);
+  }
+  builder.single = vi.fn(() => builder);
+  builder.then = (resolve: (value: ResolvedValue) => void) => {
+    const queue = queues[table];
+    resolve(queue && queue.length > 0 ? queue.shift()! : { data: null, error: null });
   };
   return builder;
 }
 
-let queryBuilder: QueryBuilder;
-
 vi.mock("@/lib/supabase/server", () => ({
   createClient: async () => ({
     auth: { getUser },
-    from: () => queryBuilder,
+    from: (table: string) => createQueryBuilder(table),
   }),
 }));
 
@@ -56,7 +49,8 @@ function requestFor() {
 describe("POST /api/collections/:id/restore", () => {
   beforeEach(() => {
     getUser.mockReset();
-    queryBuilder = createQueryBuilder();
+    queues = {};
+    getUser.mockResolvedValue({ data: { user: { id: "user-1" } } });
   });
 
   it("returns 400 for a malformed id without touching the database", async () => {
@@ -75,20 +69,61 @@ describe("POST /api/collections/:id/restore", () => {
   });
 
   it("returns 404 when the collection isn't in Trash", async () => {
-    getUser.mockResolvedValue({ data: { user: { id: "user-1" } } });
-    queryBuilder.resolveWith({ data: null, error: { code: "PGRST116" } });
+    queueResponse("collections", { data: null, error: { code: "PGRST116" } });
 
     const response = await POST(requestFor(), { params });
 
     expect(response.status).toBe(404);
   });
 
-  it("restores the collection on success", async () => {
-    getUser.mockResolvedValue({ data: { user: { id: "user-1" } } });
-    queryBuilder.resolveWith({ data: { id: VALID_ID, deleted_at: null }, error: null });
+  it("returns 500 and logs when the trashed-at lookup fails for a non-404 reason", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    queueResponse("collections", { data: null, error: { message: "boom" } });
 
     const response = await POST(requestFor(), { params });
 
+    expect(response.status).toBe(500);
+    expect(consoleError).toHaveBeenCalled();
+    consoleError.mockRestore();
+  });
+
+  it("restores the collection and cascades restore to the items trashed with it", async () => {
+    const deletedAt = "2026-01-01T00:00:00.000Z";
+    queueResponse("collections", { data: { deleted_at: deletedAt }, error: null }); // lookup
+    queueResponse("collections", { data: { id: VALID_ID, deleted_at: null }, error: null }); // update
+    queueResponse("knowledge_items", { data: null, error: null }); // cascade update succeeds
+
+    const response = await POST(requestFor(), { params });
+
+    expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ id: VALID_ID, deleted_at: null });
+  });
+
+  it("still returns 200 but flags itemCascadeIncomplete if the item cascade fails", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const deletedAt = "2026-01-01T00:00:00.000Z";
+    queueResponse("collections", { data: { deleted_at: deletedAt }, error: null });
+    queueResponse("collections", { data: { id: VALID_ID, deleted_at: null }, error: null });
+    queueResponse("knowledge_items", { data: null, error: { message: "boom" } });
+
+    const response = await POST(requestFor(), { params });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ itemCascadeIncomplete: true });
+    expect(consoleError).toHaveBeenCalled();
+    consoleError.mockRestore();
+  });
+
+  it("returns 500 and logs when the restore update itself fails for a non-404 reason", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const deletedAt = "2026-01-01T00:00:00.000Z";
+    queueResponse("collections", { data: { deleted_at: deletedAt }, error: null });
+    queueResponse("collections", { data: null, error: { message: "boom" } });
+
+    const response = await POST(requestFor(), { params });
+
+    expect(response.status).toBe(500);
+    expect(consoleError).toHaveBeenCalled();
+    consoleError.mockRestore();
   });
 });

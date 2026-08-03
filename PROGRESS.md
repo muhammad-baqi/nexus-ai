@@ -5,7 +5,7 @@
 > and release cadence are `docs/00_Project/Roadmap.md`.
 > `[ ]` = not started · `[~]` = in progress · `[x]` = done & committed.
 
-Last updated: 2026-08-03 — Shared item behavior — move between collections shipped, see below.
+Last updated: 2026-08-03 — Shared item behavior — trash / restore / permanent delete shipped, see below.
 
 Previously, 2026-08-01 — **Day 2 QA gate passed**, both 🔴 blockers found and closed:
 `e2e/login.spec.ts`/`e2e/logout.spec.ts` were stale (still asserted the pre-Dashboard-shell
@@ -21,12 +21,12 @@ re-investigate only if it starts affecting Vercel too. `develop`/`staging`/`main
 Infra is now fully set up: two Vercel projects (staging → `staging`, production → `main`), two
 Supabase projects (`nexus-staging`, `nexus-prod`) with all 3 migrations applied to both.
 
-**Day 3 in progress (8/11)**: Notes — create/edit title+body, Notes — rich formatting, Notes —
+**Day 3 in progress (9/11)**: Notes — create/edit title+body, Notes — rich formatting, Notes —
 Markdown source / WYSIWYG toggle, Notes — autosave, Notes — version history, Notes — checklist
 toggle from rendered view, Shared item behavior — tag (create/rename/delete/merge), favorite,
-archive, and Shared item behavior — move between collections all shipped — see below. `develop` is
-ahead of `staging`/`main` again as normal feature work resumes (Day 3 releases to staging only,
-not production, per `Roadmap.md`).
+archive, Shared item behavior — move between collections, and Shared item behavior — trash /
+restore / permanent delete all shipped — see below. `develop` is ahead of `staging`/`main` again as
+normal feature work resumes (Day 3 releases to staging only, not production, per `Roadmap.md`).
 
 ---
 
@@ -269,7 +269,7 @@ CLI commands don't default to prod.
   `.claude/docs/git-workflow.md`. Day 2 QA gate (`.claude/docs/qa-checklist.md`) still to run
   before that promotion.
 
-## Day 3 — Knowledge Management — release Wednesday (staging only) (8/11)
+## Day 3 — Knowledge Management — release Wednesday (staging only) (9/11)
 
 - [x] Notes — create, edit title/body — `app/api/items` (list/create) + `app/api/items/:id`
   (get/update) against the existing `knowledge_items` table (type='note'); no new migration, RLS
@@ -494,7 +494,38 @@ CLI commands don't default to prod.
   Playwright run** — the run hit the same pre-existing version-history-section failure the previous
   feature's entry above already documents (reproduced independent of this change, and it occurs
   earlier in the spec than the new assertion, so the new code was never reached).
-- [ ] Shared item behavior — trash / restore / permanent delete (cascades to collection delete)
+- [x] Shared item behavior — trash / restore / permanent delete (cascades to collection delete) —
+  `DELETE /api/items/:id` soft-deletes (sets `deleted_at`); `POST /api/items/:id/restore` restores
+  in place if the item's original collection is still live, otherwise re-homes into the caller's
+  "Inbox" collection, falling back further to the oldest surviving collection if "Inbox" itself
+  was renamed (Collections are renamable since Day 2 — a real, reachable dead end otherwise);
+  `DELETE /api/items/:id/permanent` hard-deletes, only from Trash. New unified `GET /api/trash`
+  (items + collections together, per `API_Design.md`) backs a new `/trash` page — collection rows
+  restore via the existing `POST /api/collections/:id/restore`; only items get a permanent-delete
+  route, per `Knowledge_Items.md`. `NoteEditor` gained an inline-confirm "Move to Trash" action
+  that DELETEs and navigates back to the item's collection. **Scope deviation from the original
+  plan**: Trash listing became a unified `GET /api/trash` instead of `GET /api/items?view=trashed`
+  (the `view` param was removed from `/api/items` entirely) — matches `API_Design.md`'s actual
+  Trash section, which the original per-feature plan had missed.
+  Self-review (code-reviewer subagent) caught one real gap, fixed: `POST
+  /api/collections/:id/restore` only cleared the collection's own `deleted_at` — it never restored
+  the items `DELETE /api/collections/:id`'s cascade had trashed along with it, silently stranding
+  every item of a deleted-then-restored collection in Trash under a now-live parent. This is a
+  named acceptance criterion for this exact feature ("cascades to collection delete"). Fixed by
+  capturing the collection's `deleted_at` before clearing it, then restoring only the
+  `knowledge_items` rows sharing that exact timestamp (not ones trashed individually before or
+  after), mirroring `DELETE`'s own `itemCascadeIncomplete` partial-failure pattern rather than a
+  silent no-op. Self-review also caught the item-restore success message hardcoding "restored to
+  Inbox" even on the oldest-surviving-collection fallback path — fixed by having the restore route
+  return the real target collection's name (`rehomedToCollectionName`) instead of assuming Inbox.
+  438/438 unit/integration tests green (47 new/changed), typecheck clean. All `e2e/trash.spec.ts`
+  `@smoke` tests green against the real local Supabase/Mailpit stack via a real Chromium browser
+  (Playwright, not mocked): the original create→trash→restore→trash→permanent-delete loop, plus a
+  new case added after the self-review finding (delete a collection with one note in it, confirm
+  both show up in Trash, restore the collection, confirm the note is back inside it). Confirmed
+  `npm run build`'s pre-existing `/_not-found`/`/_global-error` Turbopack prerender failure (noted
+  above, 2026-08-01) still reproduces on a clean `develop` checkout with a fully fresh
+  `node_modules`/`.next` volume — unrelated to this feature, not re-diagnosed here.
 - [ ] Stress test: agent creates hundreds of notes, confirm UI stays responsive
 - [ ] **Staging deploy — no production release today**
 

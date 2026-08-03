@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -56,6 +57,7 @@ function mergeServerItem(prev: Item | null, updated: ServerItem): Item {
 }
 
 export function NoteEditor({ itemId }: Props) {
+  const router = useRouter();
   const [item, setItem] = useState<Item | null>(null);
   const [loadError, setLoadError] = useState<string | undefined>();
   const [mode, setMode] = useState<"view" | "edit">("view");
@@ -64,6 +66,8 @@ export function NoteEditor({ itemId }: Props) {
   const [body, setBody] = useState("");
   const [historyOpen, setHistoryOpen] = useState(false);
   const [toggleError, setToggleError] = useState<string | undefined>();
+  const [isConfirmingTrash, setIsConfirmingTrash] = useState(false);
+  const [isTrashing, setIsTrashing] = useState(false);
 
   // The note_versions row the *next* autosave should coalesce into — null means "open a new
   // boundary instead" (a fresh Edit session, or the previous write's version-bookkeeping
@@ -269,6 +273,26 @@ export function NoteEditor({ itemId }: Props) {
     setItem((prev) => (prev ? { ...prev, collection_id: newCollectionId } : prev));
   }
 
+  // Mirrors components/collections/collection-card.tsx's isConfirmingDelete pattern — an inline
+  // confirm swap rather than a modal, since this codebase has no dialog library. Once trashed,
+  // the item is gone from this page's own reach (no way to keep viewing/editing a trashed note
+  // here), so navigate back to the collection it was in rather than leaving a dead page up.
+  async function handleTrash() {
+    if (!item) return;
+    setToggleError(undefined);
+    setIsTrashing(true);
+    const response = await fetch(`/api/items/${itemId}`, { method: "DELETE" });
+    setIsTrashing(false);
+
+    if (!response.ok) {
+      setIsConfirmingTrash(false);
+      setToggleError(await parseErrorMessage(response, "Something went wrong."));
+      return;
+    }
+
+    router.push(`/collections/${item.collection_id}`);
+  }
+
   if (loadError) {
     return (
       <p className="text-destructive text-sm" role="alert">
@@ -381,6 +405,26 @@ export function NoteEditor({ itemId }: Props) {
           >
             History
           </Button>
+          {isConfirmingTrash ? (
+            <>
+              <span className="text-sm">Move to Trash?</span>
+              <Button
+                type="button"
+                variant="destructive"
+                onClick={handleTrash}
+                disabled={isTrashing}
+              >
+                {isTrashing ? "Moving…" : "Confirm"}
+              </Button>
+              <Button type="button" variant="outline" onClick={() => setIsConfirmingTrash(false)}>
+                Cancel
+              </Button>
+            </>
+          ) : (
+            <Button type="button" variant="outline" onClick={() => setIsConfirmingTrash(true)}>
+              Move to Trash
+            </Button>
+          )}
         </div>
         {historyOpen && <NoteVersionHistory itemId={itemId} onRestored={handleRestored} />}
       </div>
@@ -416,6 +460,37 @@ export function NoteEditor({ itemId }: Props) {
           >
             History
           </Button>
+          {isConfirmingTrash ? (
+            <>
+              <span className="text-sm">Move to Trash?</span>
+              <Button
+                type="button"
+                variant="destructive"
+                size="sm"
+                onClick={handleTrash}
+                disabled={isTrashing}
+              >
+                {isTrashing ? "Moving…" : "Confirm"}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setIsConfirmingTrash(false)}
+              >
+                Cancel
+              </Button>
+            </>
+          ) : (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setIsConfirmingTrash(true)}
+            >
+              Move to Trash
+            </Button>
+          )}
         </div>
       </div>
       <TagInput itemId={itemId} tags={item.tags} onTagsChange={handleTagsChange} />

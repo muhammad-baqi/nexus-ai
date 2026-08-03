@@ -3,6 +3,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { NoteEditor } from "./note-editor";
 
+const routerPush = vi.fn();
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: routerPush }),
+}));
+
 // The Rich text surface's own parse/serialize/toolbar behavior is already covered by
 // note-rich-text-editor.test.tsx — here we only need to prove that whatever it reports via
 // onChange flows into the same autosave draft as the Markdown textarea does.
@@ -84,6 +89,7 @@ describe("NoteEditor", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.stubGlobal("fetch", vi.fn());
+    routerPush.mockClear();
   });
 
   afterEach(() => {
@@ -398,6 +404,59 @@ describe("NoteEditor", () => {
       fireEvent.click(screen.getByRole("button", { name: "Simulate move" }));
 
       expect(screen.getByTestId("move-current-collection")).toHaveTextContent("collection-2");
+    });
+  });
+
+  describe("move to trash", () => {
+    it("shows an inline confirm and cancelling makes no request", async () => {
+      (fetch as ReturnType<typeof vi.fn>).mockResolvedValue(jsonResponse(baseItem));
+
+      render(<NoteEditor itemId="item-1" />);
+      await flush();
+      (fetch as ReturnType<typeof vi.fn>).mockClear();
+
+      fireEvent.click(screen.getByRole("button", { name: /^move to trash$/i }));
+      expect(screen.getByText("Move to Trash?")).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole("button", { name: /^cancel$/i }));
+      expect(screen.queryByText("Move to Trash?")).not.toBeInTheDocument();
+      expect(fetch).not.toHaveBeenCalled();
+    });
+
+    it("confirming DELETEs the item and navigates to its collection", async () => {
+      (fetch as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce(jsonResponse(baseItem))
+        .mockResolvedValueOnce(jsonResponse({ id: "item-1", deleted_at: "2026-08-03T00:00:00Z" }));
+
+      render(<NoteEditor itemId="item-1" />);
+      await flush();
+
+      fireEvent.click(screen.getByRole("button", { name: /^move to trash$/i }));
+      fireEvent.click(screen.getByRole("button", { name: /^confirm$/i }));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+
+      expect(fetch).toHaveBeenCalledWith("/api/items/item-1", expect.objectContaining({ method: "DELETE" }));
+      expect(routerPush).toHaveBeenCalledWith("/collections/collection-1");
+    });
+
+    it("shows an inline error and stays on the page when the delete fails", async () => {
+      (fetch as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce(jsonResponse(baseItem))
+        .mockResolvedValueOnce(jsonResponse({ error: { message: "boom" } }, false));
+
+      render(<NoteEditor itemId="item-1" />);
+      await flush();
+
+      fireEvent.click(screen.getByRole("button", { name: /^move to trash$/i }));
+      fireEvent.click(screen.getByRole("button", { name: /^confirm$/i }));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+
+      expect(screen.getByRole("alert")).toHaveTextContent("boom");
+      expect(routerPush).not.toHaveBeenCalled();
     });
   });
 

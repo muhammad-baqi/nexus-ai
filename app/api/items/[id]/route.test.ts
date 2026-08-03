@@ -45,7 +45,7 @@ vi.mock("@/lib/supabase/server", () => ({
   }),
 }));
 
-import { GET, PATCH } from "./route";
+import { DELETE, GET, PATCH } from "./route";
 
 function requestFor(method: string, body?: unknown) {
   return new NextRequest(`http://localhost:3000/api/items/${VALID_ID}`, {
@@ -407,5 +407,60 @@ describe("PATCH /api/items/:id", () => {
       expect(consoleError).toHaveBeenCalled();
       consoleError.mockRestore();
     });
+  });
+});
+
+describe("DELETE /api/items/:id", () => {
+  beforeEach(() => {
+    getUser.mockReset();
+    queues = {};
+    fromCalls = {};
+    getUser.mockResolvedValue({ data: { user: { id: "user-1" } } });
+  });
+
+  it("returns 400 for a malformed id without touching the database", async () => {
+    const response = await DELETE(requestFor("DELETE"), { params: invalidParams });
+
+    expect(response.status).toBe(400);
+    expect(getUser).not.toHaveBeenCalled();
+  });
+
+  it("returns 401 when there is no session", async () => {
+    getUser.mockResolvedValue({ data: { user: null } });
+
+    const response = await DELETE(requestFor("DELETE"), { params });
+
+    expect(response.status).toBe(401);
+  });
+
+  it("returns 404 when the item is already trashed, isn't owned, or doesn't exist", async () => {
+    queueResponse("knowledge_items", { data: null, error: { code: "PGRST116" } });
+
+    const response = await DELETE(requestFor("DELETE"), { params });
+
+    expect(response.status).toBe(404);
+  });
+
+  it("soft-deletes the item, scoped to the owner, and returns it", async () => {
+    queueResponse("knowledge_items", {
+      data: { id: VALID_ID, deleted_at: "2026-08-03T00:00:00.000Z" },
+      error: null,
+    });
+
+    const response = await DELETE(requestFor("DELETE"), { params });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ id: VALID_ID });
+  });
+
+  it("returns 500 and logs on a delete failure", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    queueResponse("knowledge_items", { data: null, error: { message: "boom" } });
+
+    const response = await DELETE(requestFor("DELETE"), { params });
+
+    expect(response.status).toBe(500);
+    expect(consoleError).toHaveBeenCalled();
+    consoleError.mockRestore();
   });
 });
