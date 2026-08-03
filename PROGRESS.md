@@ -5,7 +5,7 @@
 > and release cadence are `docs/00_Project/Roadmap.md`.
 > `[ ]` = not started · `[~]` = in progress · `[x]` = done & committed.
 
-Last updated: 2026-08-03 — Shared item behavior — tags/favorite/archive shipped, see below.
+Last updated: 2026-08-03 — Shared item behavior — move between collections shipped, see below.
 
 Previously, 2026-08-01 — **Day 2 QA gate passed**, both 🔴 blockers found and closed:
 `e2e/login.spec.ts`/`e2e/logout.spec.ts` were stale (still asserted the pre-Dashboard-shell
@@ -21,11 +21,12 @@ re-investigate only if it starts affecting Vercel too. `develop`/`staging`/`main
 Infra is now fully set up: two Vercel projects (staging → `staging`, production → `main`), two
 Supabase projects (`nexus-staging`, `nexus-prod`) with all 3 migrations applied to both.
 
-**Day 3 in progress (7/11)**: Notes — create/edit title+body, Notes — rich formatting, Notes —
+**Day 3 in progress (8/11)**: Notes — create/edit title+body, Notes — rich formatting, Notes —
 Markdown source / WYSIWYG toggle, Notes — autosave, Notes — version history, Notes — checklist
-toggle from rendered view, and Shared item behavior — tag (create/rename/delete/merge), favorite,
-archive all shipped — see below. `develop` is ahead of `staging`/`main` again as normal feature
-work resumes (Day 3 releases to staging only, not production, per `Roadmap.md`).
+toggle from rendered view, Shared item behavior — tag (create/rename/delete/merge), favorite,
+archive, and Shared item behavior — move between collections all shipped — see below. `develop` is
+ahead of `staging`/`main` again as normal feature work resumes (Day 3 releases to staging only,
+not production, per `Roadmap.md`).
 
 ---
 
@@ -268,7 +269,7 @@ CLI commands don't default to prod.
   `.claude/docs/git-workflow.md`. Day 2 QA gate (`.claude/docs/qa-checklist.md`) still to run
   before that promotion.
 
-## Day 3 — Knowledge Management — release Wednesday (staging only) (7/11)
+## Day 3 — Knowledge Management — release Wednesday (staging only) (8/11)
 
 - [x] Notes — create, edit title/body — `app/api/items` (list/create) + `app/api/items/:id`
   (get/update) against the existing `knowledge_items` table (type='note'); no new migration, RLS
@@ -458,7 +459,41 @@ CLI commands don't default to prod.
   environment independent of this change (reproduced on a clean `develop` checkout via
   `git stash -u`), the same kind of known local-only environment quirk as the Turbopack
   dev-server-staleness notes above; not re-diagnosed here, live API + RLS verification substituted.
-- [ ] Shared item behavior — move between collections
+- [x] Shared item behavior — move between collections — `PATCH /api/items/:id` gained
+  `collection_id`, per `docs/03_Architecture/API_Design.md`; no new migration. Extracted the
+  cross-user/trashed-collection ownership check `POST /api/items` already had (RLS on
+  `knowledge_items` only validates the row's own `owner_id`, not that a client-supplied
+  `collection_id` belongs to the same owner) into a shared `lib/items/verify-collection-ownership.ts`,
+  now called by both create and move; a failed check returns a distinct `collection_not_found`
+  (vs. the endpoint's existing item-level `not_found`). New `components/notes/move-item-control.tsx`
+  — a `<select>` merging `GET /api/collections?view=active` + `?view=archived` (a note can already
+  live inside a since-archived collection, so the current one must always be selectable even when
+  not "active"), immediate-PATCH-on-change like the existing Favorite/Archive buttons, with a
+  404 (`collection_not_found`) reverting the selection (it's a controlled component bound to the
+  item's real `collection_id`) and re-fetching the list per `Knowledge_Items.md`'s Error States
+  section. Wired into `NoteEditor` in both view and edit mode. Self-review (code-reviewer subagent)
+  caught two real issues, both fixed: the move PATCH wasn't wrapped in try/catch, so a thrown
+  fetch (not just a non-2xx response) would leave the control permanently stuck disabled; and the
+  new e2e assertion referenced "New collection" (a control that only exists on the top-level
+  `/collections` page) while the flow was still on a collection-detail page — re-sequenced. Also
+  added logging to the shared ownership helper for genuine DB errors, distinct from the expected
+  "no rows" case. 398/398 unit/integration tests green (7 new), typecheck clean. **Verified live
+  against the real local Supabase stack via direct API calls with two real confirmed accounts**
+  (real signup → Mailpit → confirm-link → verifyOtp, no mocks): as user A, moved a note (carrying
+  a tag and `is_favorite: true`) between two of their own collections — `collection_id` updated
+  correctly, tag and favorite state both confirmed unchanged afterward; as user B, reading user A's
+  new collection directly returned `[]` (confirms `verifyCollectionOwnership`'s result is backed by
+  `collections`' own RLS policy, not merely an app-level filter) and attempting to move user A's
+  item into user A's own Inbox affected 0 rows (existing `knowledge_items` RLS, unchanged here,
+  already blocks it). The actual browser-driven walkthrough was blocked this session by a
+  local-environment issue unrelated to this change: the Chrome instance Claude-in-Chrome drives
+  couldn't resolve `host.docker.internal` (this shell could, and `127.0.0.1` worked in both) —
+  apparently a different network namespace for that one hostname — so registering an account
+  through the real UI wasn't possible; direct-API verification substituted. `e2e/notes.spec.ts` was
+  extended with a matching `@smoke` move assertion but **not confirmed green by an actual
+  Playwright run** — the run hit the same pre-existing version-history-section failure the previous
+  feature's entry above already documents (reproduced independent of this change, and it occurs
+  earlier in the spec than the new assertion, so the new code was never reached).
 - [ ] Shared item behavior — trash / restore / permanent delete (cascades to collection delete)
 - [ ] Stress test: agent creates hundreds of notes, confirm UI stays responsive
 - [ ] **Staging deploy — no production release today**

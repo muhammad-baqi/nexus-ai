@@ -335,3 +335,48 @@ mocked: its token gets `[]` reading the first account's item directly, `[]` (0 r
 PATCH attempting to favorite that item or rename the first account's tag, and an explicit `42501`
 row-level-security-violation 403 attempting to attach the first account's tag to the first
 account's item.
+
+## Shared item behavior — move between collections (Day 3)
+
+`app/api/items/route.test.ts` (unchanged behavior, regression after the ownership-check refactor):
+- [x] `POST` still rejects a `collection_id` that doesn't belong to the caller or is trashed, exactly as before extracting `verifyCollectionOwnership`
+
+`app/api/items/[id]/route.test.ts` (extended):
+- [x] `PATCH` with a `collection_id` the caller owns (not trashed) moves the item; response reflects the new `collection_id`
+- [x] `PATCH` with a `collection_id` owned by another user, or one that belongs to the caller but is trashed, returns 404 `collection_not_found` without touching `knowledge_items` (same combined case as the existing item-ownership 404 test above it)
+- [x] Moving an item leaves its `tags`, `is_favorite`, `is_archived` untouched in the same response
+
+`components/notes/move-item-control.test.tsx` (new):
+- [x] renders the current collection preselected, merging both active and archived (non-trashed) collections from the two list fetches
+- [x] selecting a different collection PATCHes `collection_id` and calls `onMoved` with the new id
+- [x] a failed move (404) shows an inline error, reverts the select to the original collection, and re-fetches the collections list
+
+`components/notes/note-editor.test.tsx` (extended):
+- [x] `MoveItemControl` is rendered in both view and edit mode with the item's current `collection_id`
+- [x] its `onMoved` callback updates the locally-held item's `collection_id`
+
+- [ ] `e2e/notes.spec.ts` extended with the move assertion (code written and re-sequenced after
+      self-review caught the new block referencing "New collection", a control that only exists on
+      the top-level `/collections` page, while still on a collection-detail page — fixed). **Not
+      confirmed green by an actual Playwright run**: the run hit the same pre-existing
+      version-history-section failure documented under the previous feature's entry above
+      (reproduced independent of this change), which occurs earlier in the same spec than the new
+      move assertion, so the new code was never reached by that run. Substituted a full live
+      verification against the real local Supabase stack instead (see below) — this also doubled as
+      the "drive it in a real browser" verify step, since a separate local-environment issue this
+      session (the Chrome instance driven by Claude-in-Chrome could not resolve
+      `host.docker.internal`, unlike this shell, which could — apparently a different network
+      namespace for that specific hostname — even though `127.0.0.1` worked fine in both) blocked
+      registering an account through the actual UI this session.
+
+Live verification (direct API calls against the real local Supabase stack, two real confirmed
+accounts, no mocks): signed up and confirmed two accounts via the real Mailpit
+signup→confirm-link→verifyOtp flow; as user A, created a second collection and a note (with a tag
+and `is_favorite: true`) in Inbox, then moved it via a direct PATCH — `collection_id` updated
+correctly, and the tag and `is_favorite` were confirmed unchanged afterward. As user B: reading
+user A's new collection directly returned `[]` (RLS-blocked — the same query
+`verifyCollectionOwnership` runs, confirming its result isn't merely an app-level filter but is
+actually backed by `collections`' own `owner_id = auth.uid()` RLS policy already in
+`001_initial_schema.sql`), and attempting to move user A's item into user A's own Inbox affected 0
+rows (existing `knowledge_items` RLS, unchanged by this feature, already blocks it). Re-fetching
+user A's item afterward confirmed it was untouched by B's attempt.

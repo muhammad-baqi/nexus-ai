@@ -20,6 +20,7 @@ export const updateItemSchema = z
     description: z.string().max(50_000, "Note is too long").nullable().optional(),
     is_favorite: z.boolean().optional(),
     is_archived: z.boolean().optional(),
+    collection_id: z.string().uuid().optional(),
     // Notes-only: the note_versions row this save should coalesce into (update), echoed back
     // from a previous PATCH's `versionId` response field. Omitted/null opens a new version
     // boundary (insert) instead — see Notes.md's Version History section. Not a knowledge_items

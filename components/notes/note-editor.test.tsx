@@ -35,6 +35,28 @@ vi.mock("@/components/notes/note-version-history", () => ({
   ),
 }));
 
+// Isolates MoveItemControl's own fetch/render behavior (already covered by
+// move-item-control.test.tsx) from NoteEditor's own wiring: passing the item's current
+// collection_id down, and threading onMoved back into local item state. A real MoveItemControl
+// would otherwise fire its own /api/collections fetches right after the item loads, throwing
+// off every other test's fetch-call-count assumptions.
+vi.mock("@/components/notes/move-item-control", () => ({
+  MoveItemControl: ({
+    currentCollectionId,
+    onMoved,
+  }: {
+    currentCollectionId: string;
+    onMoved: (id: string) => void;
+  }) => (
+    <div>
+      <span data-testid="move-current-collection">{currentCollectionId}</span>
+      <button type="button" onClick={() => onMoved("collection-2")}>
+        Simulate move
+      </button>
+    </div>
+  ),
+}));
+
 function jsonResponse(body: unknown, ok = true) {
   return { ok, status: ok ? 200 : 500, json: async () => body };
 }
@@ -46,6 +68,7 @@ const baseItem = {
   updated_at: "2026-08-01T00:00:00.000Z",
   is_favorite: false,
   is_archived: false,
+  collection_id: "collection-1",
   tags: [] as { id: string; name: string }[],
 };
 
@@ -350,6 +373,31 @@ describe("NoteEditor", () => {
       });
 
       expect(screen.getByRole("alert")).toHaveTextContent("boom");
+    });
+  });
+
+  describe("move between collections", () => {
+    it("renders MoveItemControl with the item's current collection_id, in both view and edit mode", async () => {
+      (fetch as ReturnType<typeof vi.fn>).mockResolvedValue(jsonResponse(baseItem));
+
+      render(<NoteEditor itemId="item-1" />);
+      await flush();
+
+      expect(screen.getByTestId("move-current-collection")).toHaveTextContent("collection-1");
+
+      fireEvent.click(screen.getByRole("button", { name: /^edit$/i }));
+      expect(screen.getByTestId("move-current-collection")).toHaveTextContent("collection-1");
+    });
+
+    it("MoveItemControl's onMoved updates the locally-held item's collection_id", async () => {
+      (fetch as ReturnType<typeof vi.fn>).mockResolvedValue(jsonResponse(baseItem));
+
+      render(<NoteEditor itemId="item-1" />);
+      await flush();
+
+      fireEvent.click(screen.getByRole("button", { name: "Simulate move" }));
+
+      expect(screen.getByTestId("move-current-collection")).toHaveTextContent("collection-2");
     });
   });
 

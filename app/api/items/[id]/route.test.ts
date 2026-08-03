@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const getUser = vi.fn();
 const VALID_ID = "123e4567-e89b-12d3-a456-426614174000";
+const TARGET_COLLECTION_ID = "33333333-3333-3333-a333-333333333333";
 
 type ResolvedValue = { data: unknown; error: unknown };
 
@@ -258,6 +259,47 @@ describe("PATCH /api/items/:id", () => {
     expect(response.status).toBe(500);
     expect(consoleError).toHaveBeenCalled();
     consoleError.mockRestore();
+  });
+
+  describe("move between collections (collection_id)", () => {
+    it("verifies collection ownership before moving, and moves on success", async () => {
+      queueResponse("collections", { data: { id: TARGET_COLLECTION_ID }, error: null });
+      queueResponse("knowledge_items", {
+        data: {
+          id: VALID_ID,
+          title: "Trip planning",
+          collection_id: TARGET_COLLECTION_ID,
+          is_favorite: true,
+          is_archived: false,
+        },
+        error: null,
+      });
+
+      const response = await PATCH(requestFor("PATCH", { collection_id: TARGET_COLLECTION_ID }), {
+        params,
+      });
+
+      expect(response.status).toBe(200);
+      // Favorite/archived pass through untouched — moving never writes those columns.
+      expect(await response.json()).toMatchObject({
+        collection_id: TARGET_COLLECTION_ID,
+        is_favorite: true,
+        is_archived: false,
+      });
+      expect(fromCalls.note_versions).toBeUndefined();
+    });
+
+    it("returns 404 collection_not_found without touching knowledge_items when the target isn't owned/doesn't exist/is trashed", async () => {
+      queueResponse("collections", { data: null, error: { code: "PGRST116" } });
+
+      const response = await PATCH(requestFor("PATCH", { collection_id: TARGET_COLLECTION_ID }), {
+        params,
+      });
+
+      expect(response.status).toBe(404);
+      expect((await response.json()).error.code).toBe("collection_not_found");
+      expect(fromCalls.knowledge_items).toBeUndefined();
+    });
   });
 
   describe("version-history bookkeeping (description changes on a note)", () => {

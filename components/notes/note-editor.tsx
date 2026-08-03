@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { MoveItemControl } from "@/components/notes/move-item-control";
 import { NoteBody } from "@/components/notes/note-body";
 import { NoteRichTextEditor } from "@/components/notes/note-rich-text-editor";
 import { NoteVersionHistory } from "@/components/notes/note-version-history";
@@ -30,6 +31,7 @@ type Item = {
   updated_at: string;
   is_favorite: boolean;
   is_archived: boolean;
+  collection_id: string;
   tags: ItemTag[];
 };
 
@@ -263,6 +265,10 @@ export function NoteEditor({ itemId }: Props) {
     setItem((prev) => (prev ? { ...prev, tags } : prev));
   }
 
+  function handleMoved(newCollectionId: string) {
+    setItem((prev) => (prev ? { ...prev, collection_id: newCollectionId } : prev));
+  }
+
   if (loadError) {
     return (
       <p className="text-destructive text-sm" role="alert">
@@ -311,6 +317,11 @@ export function NoteEditor({ itemId }: Props) {
           )}
         </div>
         <TagInput itemId={itemId} tags={item.tags} onTagsChange={handleTagsChange} />
+        <MoveItemControl
+          itemId={itemId}
+          currentCollectionId={item.collection_id}
+          onMoved={handleMoved}
+        />
         <div className="flex flex-col gap-1.5">
           <div className="flex items-center justify-between">
             <Label htmlFor="note-body">Body</Label>
@@ -408,6 +419,11 @@ export function NoteEditor({ itemId }: Props) {
         </div>
       </div>
       <TagInput itemId={itemId} tags={item.tags} onTagsChange={handleTagsChange} />
+      <MoveItemControl
+        itemId={itemId}
+        currentCollectionId={item.collection_id}
+        onMoved={handleMoved}
+      />
       {statusIndicator}
       {toggleError && (
         <p className="text-destructive text-sm" role="alert">

@@ -198,4 +198,34 @@ test("create a note, edit title and body, and confirm formatting persists and re
   const archivedLink = page.getByRole("link", { name: /Trip planning/ });
   await expect(archivedLink).toBeVisible();
   await expect(archivedLink).toContainText("(Archived)");
+
+  // Shared item behavior: move between collections. Create a second collection (from the
+  // top-level /collections page — "New collection" only exists there, not on a collection's own
+  // detail page), move the note into it from the note editor, and confirm it now appears there
+  // and no longer in Inbox — per Knowledge_Items.md's "Move Between Collections" section.
+  await page.goto("/collections");
+  await page.getByRole("button", { name: "New collection" }).click();
+  await page.getByLabel("Name").fill("Archive Target");
+  await page.getByRole("button", { name: "Create" }).click();
+  await expect(page.getByText("Archive Target")).toBeVisible();
+
+  await page.getByRole("link", { name: "Inbox" }).click();
+  await page.getByRole("button", { name: /show archived/i }).click();
+  await page.getByRole("link", { name: /Trip planning/ }).click();
+  const collectionSelect = page.getByLabel("Collection");
+  await collectionSelect.selectOption({ label: "Archive Target" });
+  await expect(collectionSelect.locator("option:checked")).toHaveText("Archive Target");
+
+  await page.reload();
+  await expect(collectionSelect.locator("option:checked")).toHaveText("Archive Target");
+
+  await page.goto("/collections");
+  await page.getByRole("link", { name: "Inbox" }).click();
+  await page.getByRole("button", { name: /show archived/i }).click();
+  await expect(page.getByRole("link", { name: /Trip planning/ })).not.toBeVisible();
+
+  await page.goto("/collections");
+  await page.getByRole("link", { name: "Archive Target" }).click();
+  await page.getByRole("button", { name: /show archived/i }).click();
+  await expect(page.getByRole("link", { name: /Trip planning/ })).toBeVisible();
 });

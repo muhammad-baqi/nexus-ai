@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 
+import { verifyCollectionOwnership } from "@/lib/items/verify-collection-ownership";
 import { requireUser } from "@/lib/supabase/require-user";
 import { createClient } from "@/lib/supabase/server";
 import { createNoteSchema, DEFAULT_NOTE_TITLE, listItemsQuerySchema } from "@/lib/validation/items";
@@ -68,19 +69,8 @@ export async function POST(request: NextRequest) {
   const { user, response } = await requireUser(supabase);
   if (!user) return response;
 
-  // The RLS policy on knowledge_items only checks owner_id = auth.uid() on the row being
-  // inserted — it doesn't (and can't, from an insert) verify collection_id belongs to that same
-  // owner. Without this check, a caller could attach a note to another user's collection (or one
-  // they've already trashed) just by guessing/enumerating a UUID.
-  const { data: collection, error: collectionError } = await supabase
-    .from("collections")
-    .select("id")
-    .eq("id", result.data.collection_id)
-    .eq("owner_id", user.id)
-    .is("deleted_at", null)
-    .single();
-
-  if (collectionError || !collection) {
+  const ownsCollection = await verifyCollectionOwnership(supabase, result.data.collection_id, user.id);
+  if (!ownsCollection) {
     return NextResponse.json(
       { error: { code: "not_found", message: "This collection doesn't exist." } },
       { status: 404 },

@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 
 import { fetchItemTags } from "@/lib/items/tags";
+import { verifyCollectionOwnership } from "@/lib/items/verify-collection-ownership";
 import { requireUser } from "@/lib/supabase/require-user";
 import { createClient } from "@/lib/supabase/server";
 import { itemIdSchema, updateItemSchema } from "@/lib/validation/items";
@@ -124,6 +125,22 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
   const supabase = await createClient();
   const { user, response } = await requireUser(supabase);
   if (!user) return response;
+
+  // Moving an item to a different collection: the target must belong to this same caller and
+  // not be trashed — see verifyCollectionOwnership's comment for why RLS alone can't guarantee
+  // that here (same gap POST /api/items's create path already has to guard against).
+  if (itemFields.collection_id) {
+    const ownsCollection = await verifyCollectionOwnership(supabase, itemFields.collection_id, user.id);
+    if (!ownsCollection) {
+      // Distinct code from the item's own not_found below — same 404 status, but this endpoint
+      // can now fail to find either the item or the move's target collection, and the client
+      // needs to tell the two apart (e.g. to refresh the collection list, not the item itself).
+      return NextResponse.json(
+        { error: { code: "collection_not_found", message: "This collection doesn't exist." } },
+        { status: 404 },
+      );
+    }
+  }
 
   // Needed to know whether this PATCH's description actually changed (the client always sends
   // title+description together, whichever one changed) and whether this item is a note at all
