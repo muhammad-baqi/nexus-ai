@@ -5,7 +5,7 @@
 > and release cadence are `docs/00_Project/Roadmap.md`.
 > `[ ]` = not started · `[~]` = in progress · `[x]` = done & committed.
 
-Last updated: 2026-08-02 — Notes — checklist toggle from rendered view shipped, see below.
+Last updated: 2026-08-03 — Shared item behavior — tags/favorite/archive shipped, see below.
 
 Previously, 2026-08-01 — **Day 2 QA gate passed**, both 🔴 blockers found and closed:
 `e2e/login.spec.ts`/`e2e/logout.spec.ts` were stale (still asserted the pre-Dashboard-shell
@@ -21,11 +21,11 @@ re-investigate only if it starts affecting Vercel too. `develop`/`staging`/`main
 Infra is now fully set up: two Vercel projects (staging → `staging`, production → `main`), two
 Supabase projects (`nexus-staging`, `nexus-prod`) with all 3 migrations applied to both.
 
-**Day 3 in progress (6/11)**: Notes — create/edit title+body, Notes — rich formatting, Notes —
-Markdown source / WYSIWYG toggle, Notes — autosave, Notes — version history, and Notes —
-checklist toggle from rendered view all shipped — see below. `develop` is ahead of
-`staging`/`main` again as normal feature work resumes (Day 3 releases to staging only, not
-production, per `Roadmap.md`).
+**Day 3 in progress (7/11)**: Notes — create/edit title+body, Notes — rich formatting, Notes —
+Markdown source / WYSIWYG toggle, Notes — autosave, Notes — version history, Notes — checklist
+toggle from rendered view, and Shared item behavior — tag (create/rename/delete/merge), favorite,
+archive all shipped — see below. `develop` is ahead of `staging`/`main` again as normal feature
+work resumes (Day 3 releases to staging only, not production, per `Roadmap.md`).
 
 ---
 
@@ -268,7 +268,7 @@ CLI commands don't default to prod.
   `.claude/docs/git-workflow.md`. Day 2 QA gate (`.claude/docs/qa-checklist.md`) still to run
   before that promotion.
 
-## Day 3 — Knowledge Management — release Wednesday (staging only) (5/11)
+## Day 3 — Knowledge Management — release Wednesday (staging only) (7/11)
 
 - [x] Notes — create, edit title/body — `app/api/items` (list/create) + `app/api/items/:id`
   (get/update) against the existing `knowledge_items` table (type='note'); no new migration, RLS
@@ -429,7 +429,35 @@ CLI commands don't default to prod.
   wrong index; invisible in jsdom-based unit tests (no Strict Mode there). Fixed by memoizing the
   index per hast node (`WeakMap`) instead of an incrementing counter, then reconfirmed live:
   clicking either checkbox toggles only that one and persists through a reload.
-- [ ] Shared item behavior — tag (create/rename/delete/merge), favorite, archive
+- [x] Shared item behavior — tag (create/rename/delete/merge), favorite, archive — no new
+  migration (`tags`, `knowledge_item_tags`, `is_favorite`/`is_archived` already existed with RLS
+  from Day 1). `PATCH /api/items/:id` gained `is_favorite`/`is_archived`; `GET`/`PATCH` now embed
+  the item's current tags. New `app/api/tags/*` routes (list, rename, delete, merge — merge
+  reassigns every item from source to target via an `ignoreDuplicates` upsert, handling an item
+  that already carries both tags before the merge, then deletes the source tag) and
+  `app/api/items/:id/tags[/:tagId]` (attach with implicit get-or-create by case-insensitive name,
+  detach). New `TagInput` (chip add/remove) wired into `NoteEditor` alongside new Favorite/Archive
+  toggle buttons; new `/tags` management page (rename/delete/merge) plus a nav link. **Scope
+  decision**: archived items are hidden from `CollectionDetailView`'s default list per
+  `Knowledge_Items.md`, but a "Show archived" toggle reveals them — Day 4's global archived filter
+  doesn't exist yet, and hiding with no way back would strand an archived item with no path to
+  unarchive it; mirrors the existing Trash-view discoverability pattern. Self-review (code-reviewer
+  subagent) caught a real gap, fixed: a transient tags-read failure right after a successful
+  mutation was originally coalesced to `tags: []`, which would have silently wiped a note's visible
+  tags on any autosave/toggle — routes now pass the failure through as `tags: null` (distinct from
+  a genuinely empty list) and the client treats `null` as "unconfirmed, keep current state" rather
+  than overwriting it; also added `lib/items/tags.test.ts` covering `getOrCreateTag`'s
+  concurrent-insert race-retry path, which self-review flagged as the riskiest untested logic in
+  the diff. 391/391 unit/integration tests green, typecheck clean. Verified live against the real
+  local Supabase stack (favorite, archive, tag attach/detach/rename, and a merge where the item
+  already carried both tags before merging — the dedupe case self-review flagged) and RLS
+  cross-user isolation with a second real account via direct PostgREST calls (reads return `[]`,
+  writes are silent no-ops, cross-tag-attach gets an explicit `42501`/403). `e2e/notes.spec.ts` was
+  extended with matching `@smoke` assertions but **not confirmed green by an actual Playwright
+  run** — this repo's shared spec's pre-existing version-history section fails in this local Docker
+  environment independent of this change (reproduced on a clean `develop` checkout via
+  `git stash -u`), the same kind of known local-only environment quirk as the Turbopack
+  dev-server-staleness notes above; not re-diagnosed here, live API + RLS verification substituted.
 - [ ] Shared item behavior — move between collections
 - [ ] Shared item behavior — trash / restore / permanent delete (cascades to collection delete)
 - [ ] Stress test: agent creates hundreds of notes, confirm UI stays responsive
