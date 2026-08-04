@@ -64,6 +64,36 @@ staleness quirk (confirmed by reproducing collections.spec.ts's failure against 
 *stashed-out* baseline, then clearing the `next_cache` volume and re-running clean — passed), not
 a real regression from this feature.
 
+**2026-08-04 — Day 4 performance validation complete** (build-order-complete.md #19): seeded a
+real account (`scripts/seed-search-stress-test.mjs`, new, kept for reuse — same real-signup/
+real-Mailpit-confirmation/no-service-role-shortcuts pattern as Day 3's seed script, batched in
+groups of 500 rather than 5,000 individual inserts) with 5,000 notes (only type that exists until
+Day 5) across 5 Collections and 8 Tags, randomized favorite/archive flags and 0–3 tags each.
+Confirmed the actual Success_Metrics.md/Search.md claim — "search returns in under 500ms
+server-side" — by timing `search_knowledge_items()` directly (`scripts/measure-search-performance.mjs`,
+new, kept for reuse), zero debounce/network/browser-compile noise: worst case across 7 query
+shapes (plain browse, single/multi-word full-text, query+favorite filter, query+date-range
+filter, deep pagination at offset 4000, title A–Z sort) was **41ms — over 12x under budget**.
+New `e2e/search-performance.spec.ts` (not `@smoke` — depends on this large seeded dataset, so it's
+a one-off validation script) confirmed search/filtering/pagination stay functionally correct at
+this scale in a real browser via the dockerized `playwright` service: total counts correct,
+favorite filter returns only favorited rows, 250-page pagination navigates cleanly 5 pages deep.
+Two in-browser timing approaches were tried and abandoned as unreliable in this environment before
+settling on the RPC-level measurement as authoritative: wall-clock-from-click-to-response wrongly
+included `SearchView`'s intentional ~250ms results debounce as if it were server latency, and
+Playwright's Resource Timing API (`request.timing().responseEnd`) returned `-1` (unavailable) for
+every request here. Also ran the Day 4 QA-checklist items build-order-complete.md's own prompt
+calls out (`.claude/docs/qa-checklist.md`'s Search/Dashboard/Performance sections): trashed items
+excluded from search confirmed at the SQL level (`005_search_function.sql`'s `deleted_at is null`
+filter), filter-combining and title>tag>body ranking already covered by the Search feature's own
+tests, and Dashboard's per-section-failure-isolation and same-navigation-reflects-changes both
+re-confirmed live by this session's `e2e/dashboard.spec.ts`. No app code changed — the stress test
+surfaced no performance problems at 5,000 items, so nothing needed fixing.
+
+**Day 4 (Search & Organization, v0.2) is now code-complete on `develop` — 10/10.** Promoting
+`develop → staging → main` (tag `v0.2`) is the human's action, not the agent's — see
+`.claude/docs/git-workflow.md`.
+
 Previously, 2026-08-04 — **Day 4 Global Search shipped** (build-order-complete.md #16/#17,
 5 PROGRESS.md lines bundled into one feature since they're all the same route/UI surface —
 shipping "search" without its own filters/sorting/recent-searches live at the same time isn't a
@@ -678,7 +708,7 @@ CLI commands don't default to prod.
   detail on what was seeded and verified (responsiveness + a fresh RLS cross-user re-check).
 - [ ] **Staging deploy — no production release today**
 
-## Day 4 — Search & Organization (v0.2) — release Thursday (9/10)
+## Day 4 — Search & Organization (v0.2) — release Thursday (10/10)
 
 - [x] Global search — full-text across title, description, tags, note body — see the 2026-08-04
   entry above.
@@ -694,7 +724,8 @@ CLI commands don't default to prod.
 - [x] Dashboard — statistics widget (counts by type) — see the 2026-08-04 entry above.
 - [x] Dashboard — upcoming reminders widget (empty until Day 6 ships Notifications) — see the
   2026-08-04 entry above.
-- [ ] 5,000-item stress test — confirm search <500ms server-side, pagination holds
+- [x] 5,000-item stress test — confirm search <500ms server-side, pagination holds — see the
+  2026-08-04 entry above (41ms worst case).
 - [ ] **v0.2 released to production** ✅
 
 ## Day 5 — Knowledge Sources — release Friday (staging only) (0/13)
