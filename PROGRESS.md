@@ -5,7 +5,41 @@
 > and release cadence are `docs/00_Project/Roadmap.md`.
 > `[ ]` = not started · `[~]` = in progress · `[x]` = done & committed.
 
-Last updated: 2026-08-04 — **Day 4 Global Search shipped** (build-order-complete.md #16/#17,
+**Session paused mid-feature, 2026-08-04.** Global Search (below) is shipped and merged into
+`develop`. Currently `[~]` in progress: **Dashboard — full widgets** (build-order-complete.md
+#18, the 4 Dashboard lines below bundled into one feature — same rationale as Search: a Dashboard
+without its stats/favorites/recent-collections sections live isn't a real increment), on branch
+`feature/d4-dashboard` (pushed to origin as a backup). One commit so far, migration only, **not
+yet applied to the local DB, no route or UI code written yet**:
+
+- `supabase/migrations/006_dashboard.sql` — new `item_views` table + RLS (tracks "recently
+  viewed" distinct from edit events per `Dashboard.md`; deliberately NOT built on top of Day 6's
+  not-yet-existing `activity_log` "viewed" support — small purpose-built table instead) plus three
+  RPCs backing sections a plain PostgREST query can't express: `dashboard_recently_viewed()`
+  (join), `dashboard_recent_collections()` (GROUP BY latest-activity aggregate — "most recently
+  active" per `Dashboard.md`, not alphabetical), `dashboard_item_type_counts()` (GROUP BY count).
+  None `security definer` — RLS still applies underneath, same pattern as Day 4's search RPCs.
+
+**To resume:** `git checkout feature/d4-dashboard`, `supabase start`, `docker compose up -d app`,
+`npx supabase db reset` (applies 006 for the first time), reseed via
+`docker compose exec app node scripts/seed-stress-test.mjs`, verify each new RPC directly via a
+signed-in `supabase-js` call (same pattern used throughout the Search feature) before building on
+top of them. Still to build: `GET /api/dashboard` (parallel per-section queries — reuse
+`search_knowledge_items` RPC for "recent items", each section independently try/catch'd so one
+failing section never blocks the rest, per `Dashboard.md`'s explicit error-state requirement);
+record a view inside `GET /api/items/[id]`'s existing handler (an upsert into `item_views`,
+non-fatal on failure); a `DashboardView` client component (mirror `SearchView`'s fetch-on-mount
+pattern) replacing the static shell currently in `app/(app)/dashboard/page.tsx`; tests; self-review
+via the `code-reviewer` subagent; live verification via the dockerized `playwright` compose
+service (a host-run browser — `claude-in-chrome` or Playwright MCP — cannot complete login against
+local Supabase, see the `host.docker.internal` memory note); then squash-merge into `develop` and
+delete the branch. User has confirmed "chain through, minimal stops" pacing for the rest of Day 4
+— no need to re-ask before continuing feature-by-feature once resumed.
+
+Local Supabase + Docker were stopped cleanly at the end of this session (see below) — both need
+restarting before resuming.
+
+Previously, 2026-08-04 — **Day 4 Global Search shipped** (build-order-complete.md #16/#17,
 5 PROGRESS.md lines bundled into one feature since they're all the same route/UI surface —
 shipping "search" without its own filters/sorting/recent-searches live at the same time isn't a
 real increment): Global search (full-text across title/description/tags/note body),
@@ -629,10 +663,12 @@ CLI commands don't default to prod.
 - [x] Sorting — relevance (default w/ query), recently updated, recently created, title A–Z —
   see the 2026-08-04 entry above.
 - [x] Recent searches (shown on focus, no query typed) — see the 2026-08-04 entry above.
-- [ ] Dashboard — recent items, recently viewed widgets
-- [ ] Dashboard — favorites widget (collections + items), recent collections widget
-- [ ] Dashboard — statistics widget (counts by type)
-- [ ] Dashboard — upcoming reminders widget (empty until Day 6 ships Notifications)
+- [~] Dashboard — recent items, recently viewed widgets — **in progress, see resume note above**
+- [~] Dashboard — favorites widget (collections + items), recent collections widget — **in
+  progress, see resume note above**
+- [~] Dashboard — statistics widget (counts by type) — **in progress, see resume note above**
+- [~] Dashboard — upcoming reminders widget (empty until Day 6 ships Notifications) — **in
+  progress, see resume note above**
 - [ ] 5,000-item stress test — confirm search <500ms server-side, pagination holds
 - [ ] **v0.2 released to production** ✅
 
