@@ -22,7 +22,7 @@ function queueResponse(table: string, value: ResolvedValue) {
 
 function createQueryBuilder(table: string) {
   const builder: Record<string, unknown> = {};
-  const chainable = ["select", "update", "insert", "eq", "is", "order", "limit"];
+  const chainable = ["select", "update", "insert", "upsert", "eq", "is", "order", "limit"];
   for (const method of chainable) {
     builder[method] = vi.fn(() => builder);
   }
@@ -138,6 +138,36 @@ describe("GET /api/items/:id", () => {
     const response = await GET(requestFor("GET"), { params });
 
     expect(await response.json()).toMatchObject({ tags: null });
+    consoleError.mockRestore();
+  });
+
+  it("records a view (item_views upsert) on a successful fetch", async () => {
+    getUser.mockResolvedValue({ data: { user: { id: "user-1" } } });
+    queueResponse("knowledge_items", {
+      data: { id: VALID_ID, title: "Trip planning", description: "Packing list" },
+      error: null,
+    });
+
+    const response = await GET(requestFor("GET"), { params });
+
+    expect(response.status).toBe(200);
+    expect(fromCalls.item_views).toBe(1);
+  });
+
+  it("still returns the item when recording the view fails", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    getUser.mockResolvedValue({ data: { user: { id: "user-1" } } });
+    queueResponse("knowledge_items", {
+      data: { id: VALID_ID, title: "Trip planning", description: "Packing list" },
+      error: null,
+    });
+    queueResponse("item_views", { data: null, error: { message: "boom" } });
+
+    const response = await GET(requestFor("GET"), { params });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ id: VALID_ID });
+    expect(consoleError).toHaveBeenCalled();
     consoleError.mockRestore();
   });
 });

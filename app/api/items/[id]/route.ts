@@ -54,6 +54,20 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
   // has no tags" from "couldn't confirm" and avoid overwriting a good local list with a
   // misleadingly empty one (self-review-caught gap).
   const tags = await fetchItemTags(supabase, id);
+
+  // Dashboard.md's "Recently Viewed" tracks opening an item, distinct from editing it — recorded
+  // here since this GET is the one request every item-open goes through. Best-effort: a failed
+  // view record must never fail the item load itself (CLAUDE.md rule 7).
+  const { error: viewError } = await supabase
+    .from("item_views")
+    .upsert(
+      { knowledge_item_id: id, owner_id: user.id, viewed_at: new Date().toISOString() },
+      { onConflict: "knowledge_item_id,owner_id" },
+    );
+  if (viewError) {
+    console.error("[api/items/:id] recording view failed:", viewError);
+  }
+
   return NextResponse.json({ ...data, tags });
 }
 

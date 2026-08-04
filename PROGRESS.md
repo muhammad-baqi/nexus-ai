@@ -5,39 +5,64 @@
 > and release cadence are `docs/00_Project/Roadmap.md`.
 > `[ ]` = not started · `[~]` = in progress · `[x]` = done & committed.
 
-**Session paused mid-feature, 2026-08-04.** Global Search (below) is shipped and merged into
-`develop`. Currently `[~]` in progress: **Dashboard — full widgets** (build-order-complete.md
-#18, the 4 Dashboard lines below bundled into one feature — same rationale as Search: a Dashboard
-without its stats/favorites/recent-collections sections live isn't a real increment), on branch
-`feature/d4-dashboard` (pushed to origin as a backup). One commit so far, migration only, **not
-yet applied to the local DB, no route or UI code written yet**:
+**2026-08-04 — Day 4 Dashboard — full widgets shipped** (build-order-complete.md #18, the 4
+Dashboard lines below bundled into one feature — same rationale as Search: a Dashboard without
+its stats/favorites/recent-collections sections live isn't a real increment): Recent Items,
+Recently Viewed, Favorites (Collections + items combined), Recent Collections (by most recent
+activity, not alphabetical), Statistics (counts by type), and Upcoming Reminders (left as its
+empty-state placeholder — Reminders doesn't exist until Day 6, per the prompt's own explicit
+scope note).
 
-- `supabase/migrations/006_dashboard.sql` — new `item_views` table + RLS (tracks "recently
-  viewed" distinct from edit events per `Dashboard.md`; deliberately NOT built on top of Day 6's
-  not-yet-existing `activity_log` "viewed" support — small purpose-built table instead) plus three
-  RPCs backing sections a plain PostgREST query can't express: `dashboard_recently_viewed()`
-  (join), `dashboard_recent_collections()` (GROUP BY latest-activity aggregate — "most recently
-  active" per `Dashboard.md`, not alphabetical), `dashboard_item_type_counts()` (GROUP BY count).
-  None `security definer` — RLS still applies underneath, same pattern as Day 4's search RPCs.
+`supabase/migrations/006_dashboard.sql` — new `item_views` table + RLS (tracks "recently viewed"
+distinct from edit events per `Dashboard.md`; deliberately NOT built on top of Day 6's
+not-yet-existing `activity_log` "viewed" support — small purpose-built table instead) plus three
+RPCs backing sections a plain PostgREST query can't express: `dashboard_recently_viewed()` (join),
+`dashboard_recent_collections()` (GROUP BY latest-activity aggregate — "most recently active" per
+`Dashboard.md`, not alphabetically), `dashboard_item_type_counts()` (GROUP BY count). None
+`security definer` — RLS still applies underneath, same pattern as Day 4's search RPCs. New
+`GET /api/dashboard` runs all six sections in parallel, each independently try/catch'd (never
+throws), so one section's failure (e.g. a timed-out query) can't blank the rest of the page, per
+`Dashboard.md`'s Error States section — verified live by deliberately breaking the Statistics
+response and confirming the other five sections still render with a per-section "Couldn't load
+this section · Retry." Recent Items reuses `search_knowledge_items()` (no query, sorted by
+`updated`) rather than a new query, matching how plain browsing already falls back when there's no
+search term. `GET /api/items/:id` now upserts into `item_views` on every successful fetch
+(best-effort, logs and continues on failure — CLAUDE.md rule 7). New `DashboardView` client
+component (mirrors `SearchView`'s fetch-on-mount pattern, with an `AbortController` guarding
+retry-race staleness) replaces the static placeholder shell in `app/(app)/dashboard/page.tsx`; new
+`lib/format/relative-time.ts` for the "2 hours ago"-style timestamps `Dashboard.md` calls for.
 
-**To resume:** `git checkout feature/d4-dashboard`, `supabase start`, `docker compose up -d app`,
-`npx supabase db reset` (applies 006 for the first time), reseed via
-`docker compose exec app node scripts/seed-stress-test.mjs`, verify each new RPC directly via a
-signed-in `supabase-js` call (same pattern used throughout the Search feature) before building on
-top of them. Still to build: `GET /api/dashboard` (parallel per-section queries — reuse
-`search_knowledge_items` RPC for "recent items", each section independently try/catch'd so one
-failing section never blocks the rest, per `Dashboard.md`'s explicit error-state requirement);
-record a view inside `GET /api/items/[id]`'s existing handler (an upsert into `item_views`,
-non-fatal on failure); a `DashboardView` client component (mirror `SearchView`'s fetch-on-mount
-pattern) replacing the static shell currently in `app/(app)/dashboard/page.tsx`; tests; self-review
-via the `code-reviewer` subagent; live verification via the dockerized `playwright` compose
-service (a host-run browser — `claude-in-chrome` or Playwright MCP — cannot complete login against
-local Supabase, see the `host.docker.internal` memory note); then squash-merge into `develop` and
-delete the branch. User has confirmed "chain through, minimal stops" pacing for the rest of Day 4
-— no need to re-ask before continuing feature-by-feature once resumed.
-
-Local Supabase + Docker were stopped cleanly at the end of this session (see below) — both need
-restarting before resuming.
+Self-review (code-reviewer subagent) caught three real issues, all fixed: (1) `PATCH
+/api/collections/:id`'s archive toggle bumps `updated_at` like any other update (via the generic
+`set_updated_at` trigger), so without an explicit filter, archiving a collection to get it out of
+the way would jump it to the *top* of Recent Collections — `dashboard_recent_collections()` now
+excludes `is_archived = true`; (2) `DashboardView`'s retry button had no request-cancellation
+guard, so clicking retry while a slower prior request was still in flight could let that stale
+response resolve after the fresh one and silently clobber good state — fixed with the same
+`AbortController` pattern `search-view.tsx` already uses; (3) `loadUpcomingReminders` had been
+built as a real, working query against the `reminders` table (which already exists from Day 1's
+schema) — flagged as scope creep ahead of Day 6 with zero real test coverage for untriggerable
+code, and build-order-complete.md's own step-18 prompt explicitly says to leave this section as
+its empty state. Scoped back to a plain `ok([])`; Day 6 gets the real query and its test coverage
+together. 499/499 unit/integration tests green (28 new: 4 for the aggregated route including the
+per-section-isolation case, 8 for `DashboardView`, 5 for `relative-time`, 2 new item-view-recording
+cases in the existing items/:id route test), typecheck clean, lint clean on every touched file (one
+new `react-hooks/set-state-in-effect` instance on `DashboardView`'s mount-fetch effect — the same
+pre-existing, already-accepted pattern used by `collections-view.tsx`/`collection-detail-view.tsx`/
+`trash-view.tsx`/`tag-management-view.tsx`/`move-item-control.tsx`, 5 confirmed via `npm run lint`
+before this feature touched anything; not newly introduced as an anti-pattern, matching the
+codebase's existing "fetch on mount" shape). New `e2e/dashboard.spec.ts` (`@smoke`) verified green
+via the dockerized `playwright` compose service (a host-run browser — `claude-in-chrome` or
+Playwright MCP — can't complete login against local Supabase, per the `host.docker.internal`
+memory note): create → edit → favorite → open (recording a view) a note, confirm it surfaces in
+Recent Items/Recently Viewed/Favorites/Recent Collections/Statistics on the Dashboard with no
+manual refresh, then deliberately break Statistics via `page.route` and confirm the rest of the
+page still renders. Also re-ran `login`/`logout`/`trash`/`collections`/`register`/`verify-email`
+`@smoke` specs individually — all green; a first parallel `--workers=5` run showed several
+unrelated failures that turned out to be the already-documented local Turbopack dev-server
+staleness quirk (confirmed by reproducing collections.spec.ts's failure against this feature's own
+*stashed-out* baseline, then clearing the `next_cache` volume and re-running clean — passed), not
+a real regression from this feature.
 
 Previously, 2026-08-04 — **Day 4 Global Search shipped** (build-order-complete.md #16/#17,
 5 PROGRESS.md lines bundled into one feature since they're all the same route/UI surface —
@@ -653,7 +678,7 @@ CLI commands don't default to prod.
   detail on what was seeded and verified (responsiveness + a fresh RLS cross-user re-check).
 - [ ] **Staging deploy — no production release today**
 
-## Day 4 — Search & Organization (v0.2) — release Thursday (5/10)
+## Day 4 — Search & Organization (v0.2) — release Thursday (9/10)
 
 - [x] Global search — full-text across title, description, tags, note body — see the 2026-08-04
   entry above.
@@ -663,12 +688,12 @@ CLI commands don't default to prod.
 - [x] Sorting — relevance (default w/ query), recently updated, recently created, title A–Z —
   see the 2026-08-04 entry above.
 - [x] Recent searches (shown on focus, no query typed) — see the 2026-08-04 entry above.
-- [~] Dashboard — recent items, recently viewed widgets — **in progress, see resume note above**
-- [~] Dashboard — favorites widget (collections + items), recent collections widget — **in
-  progress, see resume note above**
-- [~] Dashboard — statistics widget (counts by type) — **in progress, see resume note above**
-- [~] Dashboard — upcoming reminders widget (empty until Day 6 ships Notifications) — **in
-  progress, see resume note above**
+- [x] Dashboard — recent items, recently viewed widgets — see the 2026-08-04 entry above.
+- [x] Dashboard — favorites widget (collections + items), recent collections widget — see the
+  2026-08-04 entry above.
+- [x] Dashboard — statistics widget (counts by type) — see the 2026-08-04 entry above.
+- [x] Dashboard — upcoming reminders widget (empty until Day 6 ships Notifications) — see the
+  2026-08-04 entry above.
 - [ ] 5,000-item stress test — confirm search <500ms server-side, pagination holds
 - [ ] **v0.2 released to production** ✅
 
