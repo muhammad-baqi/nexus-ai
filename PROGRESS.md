@@ -5,7 +5,33 @@
 > and release cadence are `docs/00_Project/Roadmap.md`.
 > `[ ]` = not started · `[~]` = in progress · `[x]` = done & committed.
 
-Last updated: 2026-08-03 — Shared item behavior — trash / restore / permanent delete shipped, see below.
+Last updated: 2026-08-04 — **Day 3 stress test complete** (build-order-complete.md #15):
+`scripts/seed-stress-test.mjs` (new, kept for reuse on future stress tests) seeds a real account
+via real signup + real Mailpit confirmation + `verifyOtp` (no service-role shortcuts) with 5
+Collections, 8 Tags, and **15 Notes** with randomized favorite/archive flags and 0–3 tags each —
+scaled down from build-order-complete.md's "a few hundred" to 15 per explicit user instruction
+(local Docker/Supabase stack on this laptop can't comfortably run a few-hundred-note seed plus a
+live browser session on top of it); every insert goes through the normal anon-key + user-session
+client, never the service-role key, so seeding itself doubled as a live RLS exercise. Confirmed
+responsive live in a real Chromium browser via the dockerized `playwright` service (the only
+reliable way to drive a real login locally — both `claude-in-chrome` and a host-run Playwright
+MCP browser hit the previously-documented `host.docker.internal` DNS gap when the client-side
+Supabase SDK tries to reach local Supabase directly during login; the dockerized `playwright`
+service resolves it fine, same as the existing `e2e/*.spec.ts` suite already relies on): login →
+redirect 465ms, `/collections` render 1002ms, a populated Collection detail view (3 notes) render
+1878ms, all on a warm dev-server route (a cold first hit was ~3.5s, Turbopack compile overhead,
+not a real perf signal). Re-ran the RLS checklist items build-order-complete.md's prompt calls out
+by name: a second real (freshly signed-up, Mailpit-confirmed) account attempted, directly against
+PostgREST with real access tokens (no mocks), to read the seeded account's item and collection by
+real (not guessed) id, favorite it, move it into its own collection, trash it, and attach its own
+tag to it — all seven attempts denied (0 rows affected or an explicit RLS policy violation), and
+the target item's favorite/collection/deleted_at state confirmed byte-for-byte unchanged
+afterward. No app code changed — the stress test surfaced no responsiveness or RLS problems at
+this scale, so nothing needed fixing. 438/438 unit/integration tests green (unchanged — no
+production code touched), typecheck clean. Staging deploy (this Day's remaining item) is the
+human's to run on the usual cadence, not this agent's.
+
+Previously, 2026-08-03 — Shared item behavior — trash / restore / permanent delete shipped.
 
 Previously, 2026-08-01 — **Day 2 QA gate passed**, both 🔴 blockers found and closed:
 `e2e/login.spec.ts`/`e2e/logout.spec.ts` were stale (still asserted the pre-Dashboard-shell
@@ -21,11 +47,12 @@ re-investigate only if it starts affecting Vercel too. `develop`/`staging`/`main
 Infra is now fully set up: two Vercel projects (staging → `staging`, production → `main`), two
 Supabase projects (`nexus-staging`, `nexus-prod`) with all 3 migrations applied to both.
 
-**Day 3 in progress (9/11)**: Notes — create/edit title+body, Notes — rich formatting, Notes —
+**Day 3 in progress (10/11)**: Notes — create/edit title+body, Notes — rich formatting, Notes —
 Markdown source / WYSIWYG toggle, Notes — autosave, Notes — version history, Notes — checklist
 toggle from rendered view, Shared item behavior — tag (create/rename/delete/merge), favorite,
-archive, Shared item behavior — move between collections, and Shared item behavior — trash /
-restore / permanent delete all shipped — see below. `develop` is ahead of `staging`/`main` again as
+archive, Shared item behavior — move between collections, Shared item behavior — trash /
+restore / permanent delete, and the stress test all shipped — see below. Staging deploy is the
+only Day 3 item left, and it's the human's to run. `develop` is ahead of `staging`/`main` again as
 normal feature work resumes (Day 3 releases to staging only, not production, per `Roadmap.md`).
 
 ---
@@ -269,7 +296,7 @@ CLI commands don't default to prod.
   `.claude/docs/git-workflow.md`. Day 2 QA gate (`.claude/docs/qa-checklist.md`) still to run
   before that promotion.
 
-## Day 3 — Knowledge Management — release Wednesday (staging only) (9/11)
+## Day 3 — Knowledge Management — release Wednesday (staging only) (10/11)
 
 - [x] Notes — create, edit title/body — `app/api/items` (list/create) + `app/api/items/:id`
   (get/update) against the existing `knowledge_items` table (type='note'); no new migration, RLS
@@ -526,7 +553,9 @@ CLI commands don't default to prod.
   `npm run build`'s pre-existing `/_not-found`/`/_global-error` Turbopack prerender failure (noted
   above, 2026-08-01) still reproduces on a clean `develop` checkout with a fully fresh
   `node_modules`/`.next` volume — unrelated to this feature, not re-diagnosed here.
-- [ ] Stress test: agent creates hundreds of notes, confirm UI stays responsive
+- [x] Stress test: agent creates hundreds of notes, confirm UI stays responsive — scaled to 15
+  notes per explicit user instruction (local hardware); see the 2026-08-04 entry above for full
+  detail on what was seeded and verified (responsiveness + a fresh RLS cross-user re-check).
 - [ ] **Staging deploy — no production release today**
 
 ## Day 4 — Search & Organization (v0.2) — release Thursday (0/10)
