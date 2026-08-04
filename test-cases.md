@@ -466,3 +466,58 @@ exact timestamp (not items the caller had trashed individually before or after) 
       create a collection with one note in it, delete the collection (cascade-trashes the note
       too), visit `/trash` and confirm both the collection and the note show up, restore the
       collection, confirm the note is back inside it.
+
+## Global search, filters, sorting, recent searches (Day 4)
+
+Bundled into one feature — search without its own filters/sorting/recent-searches live at the
+same time isn't a real product increment, and all five are the same `GET /api/items` route plus
+one `/search` page.
+
+`app/api/items/route.test.ts` (extended — GET rewritten to call the new `search_knowledge_items`
+RPC instead of a plain `.from()` query):
+- [x] 400 for a malformed `collection_id` or an invalid boolean filter value (not `"true"`/`"false"`)
+- [x] scopes the search to the caller via `p_owner_id`
+- [x] passes `q`/`collection_id` through; `sort` defaults to `relevance` when `q` is present
+- [x] `sort` defaults to `updated` when there's no query
+- [x] an explicit `sort` override wins even with a query present
+- [x] repeated `tag` params collect into `p_tag_ids` (OR filter)
+- [x] `favorite=false` maps to `p_favorite: false`, not `undefined` (the JS `Boolean()` coercion trap)
+- [x] `page`/`limit` default correctly and compute the right offset
+- [x] `created_to` extends to the end of the selected day, not midnight (regression — a
+      date-only value must include everything created that day)
+- [x] response strips `total_count` off each row and surfaces it as a top-level `total`
+- [x] 500 + log on an RPC failure
+
+`app/api/recent-searches/route.test.ts` (new):
+- [x] 401 with no session (GET and POST)
+- [x] GET returns just the query strings, most recent first
+- [x] POST 400 for an empty/whitespace-only query
+- [x] POST deduplicates case-insensitively before inserting (re-running a search bumps it, no
+      duplicate), and escapes `ilike` wildcard characters first (regression — `%`/`_` in a query
+      must match literally, not as a pattern)
+- [x] POST trims anything beyond the recent-searches cap after inserting
+- [x] 500 + log when the dedupe delete or the list query fails
+
+`lib/search/build-items-query.test.ts` (new — pure query-string-building logic):
+- [x] empty filters produce an empty querystring; `q`, filters, and `tag` (repeated per id) all
+      serialize correctly, including `favorite: false` (not omitted)
+- [x] `page` is omitted when it's 1 (the default), included otherwise
+- [x] `hasActiveFilters` is false with nothing (or only `page`) set, true for `q`, a tag, or an
+      explicitly-`false` boolean filter
+
+`components/search/search-view.test.tsx` (new):
+- [x] fetches items on mount with no query — never a blank screen, shows recent items instead
+- [x] debounces search-as-you-type: no fetch mid-typing, exactly one fetch once typing settles
+- [x] recent searches show on focus when the query is empty, hide once typing starts (a real bug
+      caught manually, not by self-review — the dropdown didn't hide on the first keystroke)
+- [x] clicking a recent search fills the input and re-runs the search
+- [x] records a recent search only after the query settles — distinct from the shorter
+      live-results debounce, confirmed no early record fires
+- [x] a filter change adds the right querystring param and resets to page 1
+- [x] "no results" state is distinct from the empty-query browse state
+- [x] a retryable error state is distinct from an empty result set
+
+- [x] Live-browser verification (dockerized `playwright` service, since a host-run browser can't
+      complete login against local Supabase — see the `host.docker.internal` memory note): empty
+      query shows items immediately, typing a query filters to matching items only, filter (type)
+      + sort (title) combine and return live-sorted results.

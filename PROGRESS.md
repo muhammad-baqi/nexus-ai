@@ -5,7 +5,68 @@
 > and release cadence are `docs/00_Project/Roadmap.md`.
 > `[ ]` = not started · `[~]` = in progress · `[x]` = done & committed.
 
-Last updated: 2026-08-04 — **Day 3 stress test complete** (build-order-complete.md #15):
+Last updated: 2026-08-04 — **Day 4 Global Search shipped** (build-order-complete.md #16/#17,
+5 PROGRESS.md lines bundled into one feature since they're all the same route/UI surface —
+shipping "search" without its own filters/sorting/recent-searches live at the same time isn't a
+real increment): Global search (full-text across title/description/tags/note body),
+search-as-you-type, filters (type/collection/tag/favorite/archived/date range, combinable),
+sorting (relevance/recently updated/recently created/title A–Z), and recent searches.
+
+Two new migrations. `004_search_ranking.sql` folds tags into `knowledge_items.search_vector`
+(weight A=title, B=tags, C=description/note-body, matching Search.md's "title > tag > body"
+ranking — previously only title/description were weighted) via new triggers on
+`knowledge_item_tags`/`tags` that keep it in sync as tags are attached/detached/renamed. That
+surfaced a real design problem before any bug existed: tag-attach today never touches the
+`knowledge_items` row itself, so writing `search_vector` from a *different* table's trigger would
+have silently started bumping `updated_at` too (via the existing generic `set_updated_at()`
+trigger, which fires on any `UPDATE`) — reordering "recently updated" sort just from tagging, an
+item's `is_favorite`/`is_archived` toggle would still be a real update but a *pure* rename-driven
+refresh should not read as "the user touched this item." Fixed by redefining `set_updated_at()`
+(via `create or replace function`, per `.claude/rules/database.md` — `001_initial_schema.sql` is
+already applied to `nexus-staging`/`nexus-prod`, never hand-edited) to only bump `updated_at` when
+something other than `search_vector` actually changed. Verified live against local Supabase: tag
+rename does NOT bump the item's `updated_at`, a real title edit still does, and — the specific
+case self-review asked to confirm wasn't an accidental over-broadening — a genuine no-op update
+(setting a collection's name to its own current value) also no longer bumps `updated_at`, while a
+real rename still does. `005_search_function.sql` adds `search_knowledge_items()`, a single
+Postgres function doing filter/tag-OR-match/`ts_rank_cd`-ranking/pagination in one indexed query
+(not `security definer` — RLS on `knowledge_items` still applies underneath regardless of what
+`p_owner_id` is passed; verified by having a second real account call the RPC directly with a
+forged owner id and confirming it still only sees its own empty result). `GET /api/items` (already
+"the primary listing/search endpoint" per `API_Design.md`) now backs both plain collection
+browsing and Search off the same RPC — no separate `/api/search` needed. New `GET`/`POST
+/api/recent-searches` (table + RLS already existed from Day 1) records a query only after it
+settles (a longer timer, distinct from the ~250ms live-results debounce) or on Enter, not on every
+keystroke-driven fetch, and dedupes case-insensitively so re-running a search bumps it to the top
+instead of duplicating. New `/search` page + nav link.
+
+Self-review (code-reviewer subagent) caught two real bugs, both fixed: (1) `created_to`'s
+date-only value (`<input type="date">` → midnight UTC) was compared as an inclusive upper bound
+against `created_at`, so selecting today as a range's end excluded almost everything actually
+created today — fixed by extending it to the last millisecond of that day, with a regression test;
+(2) recent-search dedup used `ilike` for what was meant to be an exact case-insensitive match, so
+a query containing `%`/`_` (e.g. "50% off") would match/miss unrelated rows as an unintended
+wildcard pattern — fixed by escaping those characters first, with a regression test. Self-review
+also caught genuinely empty `catch` blocks in the search view (collections/tags/recent-search
+fetch failures) with zero diagnostic trail, a CLAUDE.md rule-4 violation — fixed with
+`console.error` logging while keeping the "don't surface this to the user" behavior, since those
+are secondary to the core search results. Manual testing (not self-review) separately caught a
+real bug: the recent-searches suggestion dropdown didn't hide once the user started typing a new
+query — fixed. Also took two of self-review's optional suggestions: title sort now uses
+`lower(title)` for true case-insensitive A–Z (verified live: "apple, Banana, cherry" in that
+order), and a duplicated page-size constant in the search view now imports the shared one instead.
+477/477 unit/integration tests green (39 new), typecheck clean, lint clean on every touched file
+(5 pre-existing `react-hooks/set-state-in-effect` errors in unrelated Day 2/3 files, confirmed via
+`git stash` comparison to predate this change, left untouched — out of scope here). Verified live
+end-to-end via the dockerized `playwright` compose service (the confirmed-working path for a real
+login against local Supabase, per the `host.docker.internal` memory note — a host-run browser,
+`claude-in-chrome` or Playwright MCP alike, cannot complete login at all): query returns matching
+notes and excludes non-matching ones, type+sort filters combine correctly and return live-sorted
+results, recent searches populate on focus. Hit and resolved (not a regression, previously-known
+issue) the Turbopack dev-server route-staleness quirk — a brand-new `app/(app)/search/page.tsx`
+404'd until `docker compose restart app`.
+
+Previously, 2026-08-04 — **Day 3 stress test complete** (build-order-complete.md #15):
 `scripts/seed-stress-test.mjs` (new, kept for reuse on future stress tests) seeds a real account
 via real signup + real Mailpit confirmation + `verifyOtp` (no service-role shortcuts) with 5
 Collections, 8 Tags, and **15 Notes** with randomized favorite/archive flags and 0–3 tags each —
@@ -558,13 +619,16 @@ CLI commands don't default to prod.
   detail on what was seeded and verified (responsiveness + a fresh RLS cross-user re-check).
 - [ ] **Staging deploy — no production release today**
 
-## Day 4 — Search & Organization (v0.2) — release Thursday (0/10)
+## Day 4 — Search & Organization (v0.2) — release Thursday (5/10)
 
-- [ ] Global search — full-text across title, description, tags, note body
-- [ ] Search-as-you-type (debounced instant results)
-- [ ] Filters — type, collection, tag, favorite, archived, date range (combinable)
-- [ ] Sorting — relevance (default w/ query), recently updated, recently created, title A–Z
-- [ ] Recent searches (shown on focus, no query typed)
+- [x] Global search — full-text across title, description, tags, note body — see the 2026-08-04
+  entry above.
+- [x] Search-as-you-type (debounced instant results) — see the 2026-08-04 entry above.
+- [x] Filters — type, collection, tag, favorite, archived, date range (combinable) — see the
+  2026-08-04 entry above.
+- [x] Sorting — relevance (default w/ query), recently updated, recently created, title A–Z —
+  see the 2026-08-04 entry above.
+- [x] Recent searches (shown on focus, no query typed) — see the 2026-08-04 entry above.
 - [ ] Dashboard — recent items, recently viewed widgets
 - [ ] Dashboard — favorites widget (collections + items), recent collections widget
 - [ ] Dashboard — statistics widget (counts by type)

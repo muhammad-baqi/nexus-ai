@@ -11,10 +11,11 @@ vi.mock("next/navigation", () => ({
 import { AppNav } from "./app-nav";
 
 describe("AppNav", () => {
-  it("links to Dashboard, Collections, Tags, Trash, and Settings, and renders Logout", () => {
+  it("links to Dashboard, Search, Collections, Tags, Trash, and Settings, and renders Logout", () => {
     render(<AppNav />);
 
     expect(screen.getByRole("link", { name: "Dashboard" })).toHaveAttribute("href", "/dashboard");
+    expect(screen.getByRole("link", { name: "Search" })).toHaveAttribute("href", "/search");
     expect(screen.getByRole("link", { name: "Collections" })).toHaveAttribute(
       "href",
       "/collections",
