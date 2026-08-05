@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 
+import { fetchFileAsset } from "@/lib/items/file-asset";
 import { fetchItemTags } from "@/lib/items/tags";
 import { verifyCollectionOwnership } from "@/lib/items/verify-collection-ownership";
 import { fetchWebsiteMetadata } from "@/lib/items/website-metadata";
@@ -69,12 +70,22 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
     console.error("[api/items/:id] recording view failed:", viewError);
   }
 
-  // Only website items have a website_metadata row — an extra query per non-website item would
-  // be wasted work for the common (note) case.
+  // Only website items have a website_metadata row, only pdf/image/file items have a file_assets
+  // row — an extra query for either on every other type would be wasted work for the common
+  // (note) case.
   const website_metadata =
     data.type === "website" ? await fetchWebsiteMetadata(supabase, id) : undefined;
+  const file_asset =
+    data.type === "pdf" || data.type === "image" || data.type === "file"
+      ? await fetchFileAsset(supabase, id)
+      : undefined;
 
-  return NextResponse.json({ ...data, tags, ...(website_metadata !== undefined && { website_metadata }) });
+  return NextResponse.json({
+    ...data,
+    tags,
+    ...(website_metadata !== undefined && { website_metadata }),
+    ...(file_asset !== undefined && { file_asset }),
+  });
 }
 
 // Inserts a new note_versions row, or updates the caller-specified *currently open* one in

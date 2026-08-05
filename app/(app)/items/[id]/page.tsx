@@ -1,8 +1,11 @@
 import type { Metadata } from "next";
 
 import { BookmarkView } from "@/components/bookmarks/bookmark-view";
+import { FileItemView } from "@/components/files/file-item-view";
 import { NoteEditor } from "@/components/notes/note-editor";
 import { createClient } from "@/lib/supabase/server";
+
+const FILE_ITEM_TYPES = new Set(["pdf", "image", "file"]);
 
 export const metadata: Metadata = {
   title: "Item — Nexus",
@@ -27,6 +30,8 @@ export default async function ItemPage({ params }: Props) {
     <div className="mx-auto flex w-full max-w-2xl flex-col gap-4 p-4">
       {data?.type === "website" ? (
         <BookmarkView key={id} itemId={id} />
+      ) : data?.type && FILE_ITEM_TYPES.has(data.type) ? (
+        <FileItemView key={id} itemId={id} />
       ) : (
         // key={id}: forces a full remount on navigation between items, so a still-ticking
         // autosave debounce/retry timer for the previous note can never fire against — and

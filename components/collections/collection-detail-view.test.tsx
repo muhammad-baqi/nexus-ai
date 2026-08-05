@@ -25,7 +25,7 @@ describe("CollectionDetailView", () => {
     (fetch as ReturnType<typeof vi.fn>).mockImplementation((url: string) => {
       if (url.startsWith("/api/collections/")) return Promise.resolve(jsonResponse(baseCollection));
       return Promise.resolve(
-        jsonResponse({ items: [{ id: "item-1", title: "Packing list", updated_at: "" }] }),
+        jsonResponse({ items: [{ id: "item-1", type: "note", title: "Packing list", updated_at: "" }] }),
       );
     });
 
@@ -39,7 +39,7 @@ describe("CollectionDetailView", () => {
   it("falls back to 'Untitled Note' for a note with a blank title", async () => {
     (fetch as ReturnType<typeof vi.fn>).mockImplementation((url: string) => {
       if (url.startsWith("/api/collections/")) return Promise.resolve(jsonResponse(baseCollection));
-      return Promise.resolve(jsonResponse({ items: [{ id: "item-1", title: "", updated_at: "" }] }));
+      return Promise.resolve(jsonResponse({ items: [{ id: "item-1", type: "note", title: "", updated_at: "" }] }));
     });
 
     render(<CollectionDetailView collectionId="col-1" />);
@@ -95,8 +95,8 @@ describe("CollectionDetailView", () => {
       return Promise.resolve(
         jsonResponse({
           items: [
-            { id: "item-1", title: "Active note", updated_at: "", is_favorite: false, is_archived: false },
-            { id: "item-2", title: "Old note", updated_at: "", is_favorite: false, is_archived: true },
+            { id: "item-1", type: "note", title: "Active note", updated_at: "", is_favorite: false, is_archived: false },
+            { id: "item-2", type: "note", title: "Old note", updated_at: "", is_favorite: false, is_archived: true },
           ],
         }),
       );
@@ -120,7 +120,7 @@ describe("CollectionDetailView", () => {
       return Promise.resolve(
         jsonResponse({
           items: [
-            { id: "item-1", title: "Starred note", updated_at: "", is_favorite: true, is_archived: false },
+            { id: "item-1", type: "note", title: "Starred note", updated_at: "", is_favorite: true, is_archived: false },
           ],
         }),
       );
@@ -130,5 +130,39 @@ describe("CollectionDetailView", () => {
     await screen.findByText("Starred note");
 
     expect(screen.getByLabelText("Favorited")).toBeInTheDocument();
+  });
+
+  it("shows a type marker matching each item's type", async () => {
+    (fetch as ReturnType<typeof vi.fn>).mockImplementation((url: string) => {
+      if (url.startsWith("/api/collections/")) return Promise.resolve(jsonResponse(baseCollection));
+      return Promise.resolve(
+        jsonResponse({
+          items: [
+            { id: "item-1", type: "pdf", title: "report.pdf", updated_at: "", is_favorite: false, is_archived: false },
+            { id: "item-2", type: "image", title: "photo.png", updated_at: "", is_favorite: false, is_archived: false },
+          ],
+        }),
+      );
+    });
+
+    render(<CollectionDetailView collectionId="col-1" />);
+    await screen.findByText(/report\.pdf/);
+
+    expect(screen.getByLabelText("PDF")).toBeInTheDocument();
+    expect(screen.getByLabelText("Image")).toBeInTheDocument();
+  });
+
+  it("renders an 'Upload Files' action that expands into a drop zone", async () => {
+    (fetch as ReturnType<typeof vi.fn>).mockImplementation((url: string) => {
+      if (url.startsWith("/api/collections/")) return Promise.resolve(jsonResponse(baseCollection));
+      return Promise.resolve(jsonResponse({ items: [] }));
+    });
+
+    render(<CollectionDetailView collectionId="col-1" />);
+    await screen.findByText(/no items yet/i);
+
+    fireEvent.click(screen.getByRole("button", { name: /upload files/i }));
+
+    expect(screen.getByText(/drag and drop files here/i)).toBeInTheDocument();
   });
 });

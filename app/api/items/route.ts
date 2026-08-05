@@ -2,11 +2,16 @@ import { after, NextResponse, type NextRequest } from "next/server";
 
 import { fetchBookmarkMetadata } from "@/lib/bookmarks/fetch-bookmark-metadata";
 import { normalizeUrlForDuplicateCheck } from "@/lib/bookmarks/normalize-url";
+import { formatMaxSizeLabel, maxBytesForType } from "@/lib/files/constants";
+import { extractPdfText } from "@/lib/files/extract-pdf-text";
+import { validateFileUpload } from "@/lib/files/validate-upload";
+import { deleteUploadedObject, verifyUploadedFileContent } from "@/lib/files/verify-upload";
 import { verifyCollectionOwnership } from "@/lib/items/verify-collection-ownership";
 import { requireUser } from "@/lib/supabase/require-user";
 import { createClient } from "@/lib/supabase/server";
 import {
   createBookmarkSchema,
+  createFileItemSchema,
   createNoteSchema,
   DEFAULT_ITEMS_PAGE_LIMIT,
   DEFAULT_NOTE_TITLE,
@@ -124,9 +129,15 @@ export async function POST(request: NextRequest) {
 
   if (type === "website") return createBookmark(body);
   if (type === "note") return createNote(body);
+  if (type === "pdf" || type === "image" || type === "file") return createFileItem(body);
 
   return NextResponse.json(
-    { error: { code: "invalid_request", message: "type must be 'note' or 'website'." } },
+    {
+      error: {
+        code: "invalid_request",
+        message: "type must be one of 'note', 'website', 'pdf', 'image', 'file'.",
+      },
+    },
     { status: 400 },
   );
 }
@@ -294,6 +305,139 @@ async function createBookmark(body: unknown) {
     // same already-authenticated `supabase` client built above rather than re-deriving it from
     // cookies inside the deferred callback.
     after(() => fetchBookmarkMetadata(supabase, item.id, url));
+  }
+
+  return NextResponse.json(item, { status: 201 });
+}
+
+// The file's bytes are already uploaded to Storage (direct browser-to-Storage, see
+// lib/validation/items.ts's createFileItemSchema comment) by the time this arrives — this
+// creates the Knowledge Item + file_assets row pointing at that upload, after re-verifying
+// everything the client already checked (File_Uploads.md: "client-side validation alone is not
+// sufficient since it can be bypassed"). Any rejection past this point deletes the just-uploaded
+// Storage object rather than leaving it orphaned (File_Uploads.md's Error States).
+async function createFileItem(body: unknown) {
+  const result = createFileItemSchema.safeParse(body);
+
+  if (!result.success) {
+    return NextResponse.json(
+      {
+        error: {
+          code: "invalid_request",
+          message: result.error.issues[0]?.message ?? "Invalid file upload.",
+        },
+      },
+      { status: 400 },
+    );
+  }
+
+  const { type, collection_id, storage_path, filename, mime_type, size_bytes } = result.data;
+
+  const supabase = await createClient();
+  const { user, response } = await requireUser(supabase);
+  if (!user) return response;
+
+  // The upload itself already went through Storage RLS (files_owner_insert,
+  // 007_file_uploads.sql), which only lets the caller write under their own "{owner_id}/..."
+  // prefix — this is a defense-in-depth check that the path a client claims to have uploaded to
+  // is actually theirs, same spirit as verifyCollectionOwnership below. Deliberately checked
+  // before validateFileUpload below (not just for defense-in-depth's own sake): every later
+  // rejection branch cleans up the Storage object it just confirmed is this caller's own, and
+  // that cleanup itself relies on this authenticated, RLS-scoped `supabase` client existing —
+  // self-review caught an earlier ordering where the size/type check ran first and could reject
+  // (leaving the upload orphaned) before this client was even created.
+  if (!storage_path.startsWith(`${user.id}/`)) {
+    return NextResponse.json(
+      { error: { code: "invalid_request", message: "Invalid storage path." } },
+      { status: 400 },
+    );
+  }
+
+  const sizeCheck = validateFileUpload({ mimeType: mime_type, sizeBytes: size_bytes });
+  if (!sizeCheck.valid || sizeCheck.type !== type) {
+    await deleteUploadedObject(supabase, storage_path);
+    return NextResponse.json(
+      { error: { code: "invalid_request", message: sizeCheck.valid ? "File type mismatch." : sizeCheck.error } },
+      { status: 400 },
+    );
+  }
+
+  const ownsCollection = await verifyCollectionOwnership(supabase, collection_id, user.id);
+  if (!ownsCollection) {
+    await deleteUploadedObject(supabase, storage_path);
+    return NextResponse.json(
+      { error: { code: "not_found", message: "This collection doesn't exist." } },
+      { status: 404 },
+    );
+  }
+
+  // Content-sniffed verification against the actual uploaded bytes, not just the client-declared
+  // mime_type (File_Uploads.md's Security Requirements) — see lib/files/verify-upload.ts.
+  const contentCheck = await verifyUploadedFileContent(supabase, storage_path, mime_type);
+  if (!contentCheck.ok) {
+    await deleteUploadedObject(supabase, storage_path);
+    return NextResponse.json(
+      { error: { code: "invalid_request", message: contentCheck.reason } },
+      { status: 400 },
+    );
+  }
+
+  // The size cap above only ever checked whatever size_bytes the client claimed — a client could
+  // simply lie about it in the POST body to slide under the cap while the real (larger) bytes
+  // already sit in Storage. verifyUploadedFileContent's Range response reports the object's real
+  // size for free; re-check against it authoritatively when available, and store the real value
+  // rather than the client's claim.
+  const authoritativeSizeBytes = contentCheck.actualSizeBytes ?? size_bytes;
+  if (authoritativeSizeBytes > maxBytesForType(type)) {
+    await deleteUploadedObject(supabase, storage_path);
+    return NextResponse.json(
+      { error: { code: "invalid_request", message: `This file is too large — the limit for this type is ${formatMaxSizeLabel(type)}.` } },
+      { status: 400 },
+    );
+  }
+
+  const { data: item, error: itemError } = await supabase
+    .from("knowledge_items")
+    .insert({ owner_id: user.id, collection_id, type, title: filename })
+    .select()
+    .single();
+
+  if (itemError) {
+    console.error("[api/items] file item create failed:", itemError);
+    await deleteUploadedObject(supabase, storage_path);
+    return NextResponse.json(
+      { error: { code: "create_failed", message: "Something went wrong saving this file." } },
+      { status: 500 },
+    );
+  }
+
+  const { error: assetError } = await supabase.from("file_assets").insert({
+    knowledge_item_id: item.id,
+    storage_path,
+    original_filename: filename,
+    mime_type,
+    size_bytes: authoritativeSizeBytes,
+    extraction_status: type === "pdf" ? "pending" : "not_applicable",
+  });
+
+  if (assetError) {
+    // The item row itself already saved — but a file item with no file_assets row is useless
+    // (no way to ever read the file back), unlike a bookmark's website_metadata insert failure
+    // (CLAUDE.md rule #7 doesn't apply the same way here: there's no meaningful degraded state to
+    // fall back to). Undo both the item and the upload rather than leaving a broken item behind.
+    console.error("[api/items] file_assets create failed:", assetError);
+    await supabase.from("knowledge_items").delete().eq("id", item.id);
+    await deleteUploadedObject(supabase, storage_path);
+    return NextResponse.json(
+      { error: { code: "create_failed", message: "Something went wrong saving this file." } },
+      { status: 500 },
+    );
+  }
+
+  if (type === "pdf") {
+    // Runs after this response has been sent (CLAUDE.md rule #5). Closes over the same
+    // already-authenticated `supabase` client, same pattern as the bookmark metadata job.
+    after(() => extractPdfText(supabase, item.id, storage_path));
   }
 
   return NextResponse.json(item, { status: 201 });

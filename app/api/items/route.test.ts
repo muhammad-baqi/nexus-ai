@@ -6,13 +6,17 @@ const rpc = vi.fn();
 // vi.hoisted: these are referenced inside vi.mock() factories below, which are themselves
 // hoisted above regular top-level const declarations — a plain `const after = ...` here would
 // throw "Cannot access 'after' before initialization" once the hoisted mock factory runs first.
-const { after, fetchBookmarkMetadata } = vi.hoisted(() => ({
-  fetchBookmarkMetadata: vi.fn(),
-  // Invokes the deferred callback immediately (rather than actually deferring it) so a test can
-  // assert on its effects synchronously — the real next/server after() only guarantees it runs
-  // after the response is sent, which isn't itself something a unit test needs to model.
-  after: vi.fn((callback: () => void) => callback()),
-}));
+const { after, fetchBookmarkMetadata, extractPdfText, verifyUploadedFileContent, deleteUploadedObject } =
+  vi.hoisted(() => ({
+    fetchBookmarkMetadata: vi.fn(),
+    extractPdfText: vi.fn(),
+    verifyUploadedFileContent: vi.fn(),
+    deleteUploadedObject: vi.fn(),
+    // Invokes the deferred callback immediately (rather than actually deferring it) so a test can
+    // assert on its effects synchronously — the real next/server after() only guarantees it runs
+    // after the response is sent, which isn't itself something a unit test needs to model.
+    after: vi.fn((callback: () => void) => callback()),
+  }));
 const VALID_COLLECTION_ID = "123e4567-e89b-12d3-a456-426614174000";
 const VALID_TAG_ID = "223e4567-e89b-12d3-a456-426614174000";
 
@@ -21,6 +25,7 @@ type ResolvedValue = { data: unknown; error: unknown };
 interface QueryBuilder {
   select: ReturnType<typeof vi.fn>;
   insert: ReturnType<typeof vi.fn>;
+  delete: ReturnType<typeof vi.fn>;
   eq: ReturnType<typeof vi.fn>;
   is: ReturnType<typeof vi.fn>;
   order: ReturnType<typeof vi.fn>;
@@ -39,6 +44,7 @@ function createQueryBuilder(): QueryBuilder {
   const builder: QueryBuilder = {
     select: vi.fn(() => builder),
     insert: vi.fn(() => builder),
+    delete: vi.fn(() => builder),
     eq: vi.fn(() => builder),
     is: vi.fn(() => builder),
     order: vi.fn(() => builder),
@@ -67,6 +73,12 @@ vi.mock("@/lib/supabase/server", () => ({
 }));
 
 vi.mock("@/lib/bookmarks/fetch-bookmark-metadata", () => ({ fetchBookmarkMetadata }));
+vi.mock("@/lib/files/extract-pdf-text", () => ({ extractPdfText }));
+// verify-upload.ts's own internals (content-sniffing against a fetched byte range) are covered
+// by lib/files/verify-upload.test.ts — mocked here as a black box, same as
+// fetchBookmarkMetadata above, so this file stays focused on the route's own dispatch/validation
+// logic.
+vi.mock("@/lib/files/verify-upload", () => ({ verifyUploadedFileContent, deleteUploadedObject }));
 
 vi.mock("next/server", async (importOriginal) => {
   const actual = await importOriginal<typeof import("next/server")>();
@@ -283,7 +295,7 @@ describe("POST /api/items — type dispatch", () => {
 
   it("returns 400 for an unsupported type value", async () => {
     const response = await POST(
-      postRequestWith({ type: "pdf", collection_id: VALID_COLLECTION_ID }),
+      postRequestWith({ type: "code_snippet", collection_id: VALID_COLLECTION_ID }),
     );
 
     expect(response.status).toBe(400);
@@ -554,6 +566,231 @@ describe("POST /api/items — website bookmarks", () => {
     expect(response.status).toBe(201);
     expect(after).not.toHaveBeenCalled();
     expect(consoleError).toHaveBeenCalled();
+    consoleError.mockRestore();
+  });
+});
+
+describe("POST /api/items — file uploads (pdf/image/file)", () => {
+  const STORAGE_PATH = "user-1/upload-id/report.pdf";
+
+  function fileBody(overrides: Partial<Record<string, unknown>> = {}) {
+    return {
+      type: "pdf",
+      collection_id: VALID_COLLECTION_ID,
+      storage_path: STORAGE_PATH,
+      filename: "report.pdf",
+      mime_type: "application/pdf",
+      size_bytes: 1024,
+      ...overrides,
+    };
+  }
+
+  beforeEach(() => {
+    getUser.mockReset();
+    builders = {};
+    extractPdfText.mockReset();
+    verifyUploadedFileContent.mockReset();
+    deleteUploadedObject.mockReset();
+    after.mockClear();
+    verifyUploadedFileContent.mockResolvedValue({ ok: true, actualSizeBytes: null });
+  });
+
+  it("returns 400 and cleans up the uploaded object when the declared mime_type/size don't pass validateFileUpload", async () => {
+    getUser.mockResolvedValue({ data: { user: { id: "user-1" } } });
+
+    const response = await POST(
+      postRequestWith(fileBody({ size_bytes: 51 * 1024 * 1024 })), // over the 50MB PDF cap
+    );
+
+    expect(response.status).toBe(400);
+    // Cleanup happens here (not skipped) — self-review caught an earlier ordering where this
+    // check ran before the storage_path/auth checks that make cleanup possible at all, leaving a
+    // rejected upload's bytes orphaned in Storage.
+    expect(deleteUploadedObject).toHaveBeenCalledWith(expect.anything(), STORAGE_PATH);
+    expect(getBuilder("knowledge_items").insert).not.toHaveBeenCalled();
+  });
+
+  it("returns 400 when the declared type doesn't match the declared mime_type's real category", async () => {
+    getUser.mockResolvedValue({ data: { user: { id: "user-1" } } });
+
+    const response = await POST(
+      postRequestWith(fileBody({ type: "image", mime_type: "application/pdf" })),
+    );
+
+    expect(response.status).toBe(400);
+  });
+
+  it("returns 401 when there is no session", async () => {
+    getUser.mockResolvedValue({ data: { user: null } });
+
+    const response = await POST(postRequestWith(fileBody()));
+
+    expect(response.status).toBe(401);
+  });
+
+  it("returns 400 and does not touch Storage/DB when storage_path isn't under the caller's own owner-id prefix", async () => {
+    getUser.mockResolvedValue({ data: { user: { id: "user-1" } } });
+
+    const response = await POST(
+      postRequestWith(fileBody({ storage_path: "someone-else/upload-id/report.pdf" })),
+    );
+
+    expect(response.status).toBe(400);
+    expect(verifyUploadedFileContent).not.toHaveBeenCalled();
+  });
+
+  it("returns 404 and cleans up the uploaded object when the collection doesn't belong to the caller", async () => {
+    getUser.mockResolvedValue({ data: { user: { id: "user-1" } } });
+    getBuilder("collections").resolveWith({ data: null, error: { code: "PGRST116" } });
+
+    const response = await POST(postRequestWith(fileBody()));
+
+    expect(response.status).toBe(404);
+    expect(deleteUploadedObject).toHaveBeenCalledWith(expect.anything(), STORAGE_PATH);
+    expect(getBuilder("knowledge_items").insert).not.toHaveBeenCalled();
+  });
+
+  it("returns 400 and cleans up the uploaded object when content-sniffing finds a mismatch", async () => {
+    getUser.mockResolvedValue({ data: { user: { id: "user-1" } } });
+    allowCollectionOwnership();
+    verifyUploadedFileContent.mockResolvedValue({ ok: false, reason: "content mismatch" });
+
+    const response = await POST(postRequestWith(fileBody()));
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body.error.message).toBe("content mismatch");
+    expect(deleteUploadedObject).toHaveBeenCalledWith(expect.anything(), STORAGE_PATH);
+    expect(getBuilder("knowledge_items").insert).not.toHaveBeenCalled();
+  });
+
+  it("returns 400 and cleans up when Storage's own reported size exceeds the cap, even though the client declared a smaller size", async () => {
+    getUser.mockResolvedValue({ data: { user: { id: "user-1" } } });
+    allowCollectionOwnership();
+    // Client claims 1KB (fileBody()'s default), but the Range-fetch response Storage actually
+    // returned reports the real object as over the 50MB PDF cap — a client could otherwise lie
+    // about size_bytes in the POST body to slide under a cap.
+    verifyUploadedFileContent.mockResolvedValue({ ok: true, actualSizeBytes: 51 * 1024 * 1024 });
+
+    const response = await POST(postRequestWith(fileBody()));
+
+    expect(response.status).toBe(400);
+    expect(deleteUploadedObject).toHaveBeenCalledWith(expect.anything(), STORAGE_PATH);
+    expect(getBuilder("knowledge_items").insert).not.toHaveBeenCalled();
+  });
+
+  it("stores Storage's authoritative reported size, not the client-declared one, when they differ", async () => {
+    getUser.mockResolvedValue({ data: { user: { id: "user-1" } } });
+    allowCollectionOwnership();
+    verifyUploadedFileContent.mockResolvedValue({ ok: true, actualSizeBytes: 5000 });
+    getBuilder("knowledge_items").resolveWith({ data: { id: "item-1", type: "pdf" }, error: null });
+    getBuilder("file_assets").resolveWith({ data: null, error: null });
+
+    await POST(postRequestWith(fileBody({ size_bytes: 1024 })));
+
+    expect(getBuilder("file_assets").insert).toHaveBeenCalledWith(
+      expect.objectContaining({ size_bytes: 5000 }),
+    );
+  });
+
+  it("falls back to the client-declared size when Storage's Range response doesn't report one", async () => {
+    getUser.mockResolvedValue({ data: { user: { id: "user-1" } } });
+    allowCollectionOwnership();
+    verifyUploadedFileContent.mockResolvedValue({ ok: true, actualSizeBytes: null });
+    getBuilder("knowledge_items").resolveWith({ data: { id: "item-1", type: "pdf" }, error: null });
+    getBuilder("file_assets").resolveWith({ data: null, error: null });
+
+    await POST(postRequestWith(fileBody({ size_bytes: 1024 })));
+
+    expect(getBuilder("file_assets").insert).toHaveBeenCalledWith(
+      expect.objectContaining({ size_bytes: 1024 }),
+    );
+  });
+
+  it("creates the item + file_assets row, titled from the filename, and enqueues PDF extraction via after()", async () => {
+    getUser.mockResolvedValue({ data: { user: { id: "user-1" } } });
+    allowCollectionOwnership();
+    getBuilder("knowledge_items").resolveWith({
+      data: { id: "item-1", type: "pdf", title: "report.pdf" },
+      error: null,
+    });
+    getBuilder("file_assets").resolveWith({ data: null, error: null });
+
+    const response = await POST(postRequestWith(fileBody()));
+    const body = await response.json();
+
+    expect(response.status).toBe(201);
+    expect(body).toEqual({ id: "item-1", type: "pdf", title: "report.pdf" });
+    expect(getBuilder("knowledge_items").insert).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "pdf", title: "report.pdf" }),
+    );
+    expect(getBuilder("file_assets").insert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        knowledge_item_id: "item-1",
+        storage_path: STORAGE_PATH,
+        original_filename: "report.pdf",
+        mime_type: "application/pdf",
+        size_bytes: 1024,
+        extraction_status: "pending",
+      }),
+    );
+    expect(after).toHaveBeenCalledWith(expect.any(Function));
+    expect(extractPdfText).toHaveBeenCalledWith(expect.anything(), "item-1", STORAGE_PATH);
+  });
+
+  it("does not enqueue extraction for image/file items", async () => {
+    getUser.mockResolvedValue({ data: { user: { id: "user-1" } } });
+    allowCollectionOwnership();
+    getBuilder("knowledge_items").resolveWith({
+      data: { id: "item-2", type: "image", title: "photo.png" },
+      error: null,
+    });
+    getBuilder("file_assets").resolveWith({ data: null, error: null });
+
+    const response = await POST(
+      postRequestWith(
+        fileBody({ type: "image", mime_type: "image/png", filename: "photo.png", storage_path: "user-1/id/photo.png" }),
+      ),
+    );
+
+    expect(response.status).toBe(201);
+    expect(getBuilder("file_assets").insert).toHaveBeenCalledWith(
+      expect.objectContaining({ extraction_status: "not_applicable" }),
+    );
+    expect(after).not.toHaveBeenCalled();
+    expect(extractPdfText).not.toHaveBeenCalled();
+  });
+
+  it("rolls back the item and cleans up Storage when the file_assets insert fails", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    getUser.mockResolvedValue({ data: { user: { id: "user-1" } } });
+    allowCollectionOwnership();
+    getBuilder("knowledge_items").resolveWith({
+      data: { id: "item-3", type: "pdf", title: "report.pdf" },
+      error: null,
+    });
+    getBuilder("file_assets").resolveWith({ data: null, error: { message: "boom" } });
+    getBuilder("knowledge_items").resolveWith({ data: null, error: null }); // the rollback delete
+
+    const response = await POST(postRequestWith(fileBody()));
+
+    expect(response.status).toBe(500);
+    expect(getBuilder("knowledge_items").delete).toHaveBeenCalled();
+    expect(deleteUploadedObject).toHaveBeenCalledWith(expect.anything(), STORAGE_PATH);
+    expect(after).not.toHaveBeenCalled();
+    consoleError.mockRestore();
+  });
+
+  it("returns 500 and cleans up Storage when the item insert itself fails", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    getUser.mockResolvedValue({ data: { user: { id: "user-1" } } });
+    allowCollectionOwnership();
+    getBuilder("knowledge_items").resolveWith({ data: null, error: { message: "boom" } });
+
+    const response = await POST(postRequestWith(fileBody()));
+
+    expect(response.status).toBe(500);
+    expect(deleteUploadedObject).toHaveBeenCalledWith(expect.anything(), STORAGE_PATH);
     consoleError.mockRestore();
   });
 });

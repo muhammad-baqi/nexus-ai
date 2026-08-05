@@ -6,6 +6,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { SaveBookmarkForm } from "@/components/bookmarks/save-bookmark-form";
+import { UploadFileForm } from "@/components/files/upload-file-form";
 
 type Collection = {
   id: string;
@@ -13,12 +14,26 @@ type Collection = {
   description: string | null;
 };
 
+type ItemType = "note" | "website" | "pdf" | "image" | "file" | "code_snippet";
+
 type Item = {
   id: string;
+  type: ItemType;
   title: string;
   updated_at: string;
   is_favorite: boolean;
   is_archived: boolean;
+};
+
+// A plain text/emoji marker rather than an icon-font dependency — keeps this list lightweight;
+// each type also gets a text label via aria-label since emoji alone isn't reliably announced.
+const TYPE_MARKERS: Record<ItemType, { icon: string; label: string }> = {
+  note: { icon: "📝", label: "Note" },
+  website: { icon: "🔗", label: "Bookmark" },
+  pdf: { icon: "📄", label: "PDF" },
+  image: { icon: "🖼️", label: "Image" },
+  file: { icon: "📎", label: "File" },
+  code_snippet: { icon: "💻", label: "Code snippet" },
 };
 
 type Status = "loading" | "loaded" | "error";
@@ -117,6 +132,7 @@ export function CollectionDetailView({ collectionId }: Props) {
             {isCreating ? "Creating..." : "New Note"}
           </Button>
           <SaveBookmarkForm collectionId={collectionId} />
+          <UploadFileForm collectionId={collectionId} onUploaded={load} />
         </div>
       </div>
 
@@ -150,6 +166,7 @@ export function CollectionDetailView({ collectionId }: Props) {
           {visibleItems.map((item) => (
             <li key={item.id} className="rounded-lg border border-border p-3">
               <Link href={`/items/${item.id}`} className="font-medium hover:underline">
+                <span aria-label={TYPE_MARKERS[item.type].label}>{TYPE_MARKERS[item.type].icon}</span>{" "}
                 {item.is_favorite && <span aria-label="Favorited">★ </span>}
                 {item.title || "Untitled Note"}
                 {item.is_archived && (
