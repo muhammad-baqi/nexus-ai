@@ -5,7 +5,66 @@
 > and release cadence are `docs/00_Project/Roadmap.md`.
 > `[ ]` = not started · `[~]` = in progress · `[x]` = done & committed.
 
-**2026-08-04 — Day 4 Dashboard — full widgets shipped** (build-order-complete.md #18, the 4
+**Session paused mid-feature, 2026-08-05.** Day 4 (below) is shipped and merged into `develop`.
+Currently `[~]` in progress: **Day 5, Website bookmarks — save flow + metadata background job**
+(build-order-complete.md #20), on branch `feature/d5-website-bookmarks` (pushed to origin as a
+backup). One commit so far — implementation is functionally complete, not yet self-reviewed or
+merged:
+
+No new migration — `website_metadata` (with RLS) already existed from
+`supabase/migrations/001_initial_schema.sql`. New `lib/bookmarks/` (URL normalization for
+duplicate-check comparison, `cheerio`-based HTML metadata parsing, the `fetchBookmarkMetadata`
+background job itself — fetch with a 10s timeout, `Content-Type` check, never throws) and
+`lib/items/website-metadata.ts` (mirrors `fetchItemTags`'s shape). `POST /api/items` now requires
+a `type: 'note' | 'website'` discriminator (the comment already in that file called this out as
+the planned Day-5 change) and branches to a new bookmark-create path: duplicate check (non-blocking
+— a normal 200 response with `{duplicate: true, existingItemId}`, not a rejection) → immediate
+insert (`fetch_status: 'pending'`, raw URL as title) → `after()` (Next's post-response background
+API, closing over the already-authenticated `supabase` client) enqueues the metadata fetch, so the
+create response never waits on the network fetch. New `POST /api/items/:id/metadata/retry`
+re-enqueues the job. `GET /api/items/:id` embeds `website_metadata` for website-type items. New
+`SaveBookmarkForm` (mirrors `CollectionDetailView`'s existing "New Note" pattern, wired in
+alongside it) and `BookmarkView` (polls while `fetch_status` is `pending` so metadata fills in
+without a manual refresh; plain Edit/Save toggle for title/description, no autosave — not required
+by the spec, unlike Notes; favicon/OG preview image render via a plain `<img>`, not `next/image`,
+since they're arbitrary external URLs discovered at runtime that can't be pre-allowlisted in
+`remotePatterns`). `app/(app)/items/[id]/page.tsx` now does a lightweight server-side `type`
+lookup (same direct-Supabase-in-a-Server-Component pattern `settings/page.tsx` already uses) to
+dispatch to `BookmarkView` vs. the existing `NoteEditor`. **New dependency** (flagging per
+CLAUDE.md): `cheerio`, for parsing arbitrary third-party HTML — nothing already in `package.json`
+parses general HTML (the `remark`/`rehype` stack is Markdown-only), and the spec's malformed-HTML
+tolerance requirement is exactly what a real parser handles correctly and hand-rolled regex
+doesn't; no new/elevated vulnerabilities from it (`npm audit` checked). Screenshot capture and
+Reading Mode are out of scope — both explicitly "Optional"/"if time allows" in
+`Website_Bookmarks.md`.
+
+556/556 unit/integration/component tests green (34 new across `lib/bookmarks/*`,
+`lib/items/website-metadata.ts`, the extended `POST /api/items` and `GET /api/items/:id` route
+tests, the new retry route, `SaveBookmarkForm`, and `BookmarkView`), typecheck clean, lint clean on
+every touched file. New `e2e/bookmarks.spec.ts` (`@smoke`) — save/poll/edit/reload,
+unreachable-URL/"Metadata unavailable"/Retry, and duplicate-prompt/"View existing" — passes green
+run standalone against real local Supabase + a real fetch to `https://example.com/` (IANA-reserved
+per RFC 2606, used instead of a live third-party site specifically to keep this deterministic) and
+a guaranteed-unreachable `.invalid` domain for the failure path.
+
+**Not yet done, in this order:**
+1. `code-reviewer` subagent self-review on the diff — not run this session.
+2. A trustworthy full-`@smoke`-suite regression check. A same-session run of the whole suite
+   together (not just this feature's own spec) showed failures across several *other*, unrelated
+   specs too (login, collections, notes, trash ×2, dashboard) in addition to this feature's own —
+   matching the shape of this repo's already-documented Turbopack/parallel-run dev-server
+   staleness flakiness (see the Day 3/4 entries below, and the standing "Turbopack cold-compile
+   causes spurious e2e failures" note), but **not yet confirmed via the established stash +
+   rerun-against-a-clean-baseline check** — don't treat it as confirmed pre-existing without doing
+   that check first; it could also be a real regression from `collection-detail-view.tsx`'s shared
+   changes.
+3. Squash-merge into `develop`, tick this line in the Day 5 checklist below, delete the branch.
+
+**To resume:** `git checkout feature/d5-website-bookmarks`, `npx supabase start`,
+`docker compose up -d app`. Local Supabase + Docker were stopped cleanly at the end of this
+session (see below) — both need restarting before resuming.
+
+Previously, 2026-08-04 — **Day 4 Dashboard — full widgets shipped** (build-order-complete.md #18, the 4
 Dashboard lines below bundled into one feature — same rationale as Search: a Dashboard without
 its stats/favorites/recent-collections sections live isn't a real increment): Recent Items,
 Recently Viewed, Favorites (Collections + items combined), Recent Collections (by most recent
@@ -730,10 +789,11 @@ CLI commands don't default to prod.
 
 ## Day 5 — Knowledge Sources — release Friday (staging only) (0/13)
 
-- [ ] Website bookmarks — paste URL → immediate save, async metadata fetch
-- [ ] Website bookmarks — metadata extraction (title, description, OG image, favicon, canonical URL, domain)
-- [ ] Website bookmarks — duplicate detection prompt (non-blocking)
-- [ ] Website bookmarks — manual retry on metadata failure
+- [~] Website bookmarks — paste URL → immediate save, async metadata fetch — **in progress, see
+  resume note at the top of this file**
+- [~] Website bookmarks — metadata extraction (title, description, OG image, favicon, canonical URL, domain) — **in progress, see resume note above**
+- [~] Website bookmarks — duplicate detection prompt (non-blocking) — **in progress, see resume note above**
+- [~] Website bookmarks — manual retry on metadata failure — **in progress, see resume note above**
 - [ ] Website bookmarks — screenshot (optional, best-effort)
 - [ ] Website bookmarks — reading mode (optional, time-permitting)
 - [ ] File uploads — PDFs (upload, in-app preview, download)
