@@ -2,6 +2,13 @@ import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const getUser = vi.fn();
+// fetchFileAsset (lib/items/file-asset.ts) calls signFileUrl to attach a fresh signed download
+// URL — mocked as a black box (its own createSignedUrl-wrapping behavior is covered by
+// lib/files/signed-url.test.ts), same reasoning fetchWebsiteMetadata's tests below don't need a
+// Storage mock since it never touches Storage at all. vi.hoisted: referenced inside the
+// vi.mock() factory below, which is itself hoisted above regular top-level declarations.
+const { signFileUrl } = vi.hoisted(() => ({ signFileUrl: vi.fn() }));
+vi.mock("@/lib/files/signed-url", () => ({ signFileUrl }));
 const VALID_ID = "123e4567-e89b-12d3-a456-426614174000";
 const TARGET_COLLECTION_ID = "33333333-3333-3333-a333-333333333333";
 
@@ -60,6 +67,7 @@ const invalidParams = Promise.resolve({ id: "not-a-uuid" });
 describe("GET /api/items/:id", () => {
   beforeEach(() => {
     getUser.mockReset();
+    signFileUrl.mockReset();
     queues = {};
     fromCalls = {};
   });
@@ -208,6 +216,51 @@ describe("GET /api/items/:id", () => {
 
     expect(fromCalls.website_metadata).toBeUndefined();
     expect(body).not.toHaveProperty("website_metadata");
+  });
+
+  it.each(["pdf", "image", "file"])(
+    "embeds file_asset (with a freshly-signed download_url) for a %s-type item",
+    async (type) => {
+      getUser.mockResolvedValue({ data: { user: { id: "user-1" } } });
+      queueResponse("knowledge_items", { data: { id: VALID_ID, type, title: "report.pdf" }, error: null });
+      queueResponse("file_assets", {
+        data: {
+          storage_path: "user-1/upload-id/report.pdf",
+          original_filename: "report.pdf",
+          mime_type: "application/pdf",
+          size_bytes: 2048,
+          extraction_status: "success",
+        },
+        error: null,
+      });
+      signFileUrl.mockResolvedValue("https://signed.example/download");
+
+      const response = await GET(requestFor("GET"), { params });
+
+      expect(await response.json()).toMatchObject({
+        file_asset: {
+          original_filename: "report.pdf",
+          size_bytes: 2048,
+          extraction_status: "success",
+          download_url: "https://signed.example/download",
+        },
+      });
+      expect(signFileUrl).toHaveBeenCalledWith(expect.anything(), "user-1/upload-id/report.pdf");
+    },
+  );
+
+  it("does not query file_assets for a note-type item", async () => {
+    getUser.mockResolvedValue({ data: { user: { id: "user-1" } } });
+    queueResponse("knowledge_items", {
+      data: { id: VALID_ID, type: "note", title: "Trip planning" },
+      error: null,
+    });
+
+    const response = await GET(requestFor("GET"), { params });
+    const body = await response.json();
+
+    expect(fromCalls.file_assets).toBeUndefined();
+    expect(body).not.toHaveProperty("file_asset");
   });
 });
 

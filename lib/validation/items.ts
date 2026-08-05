@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { GENERAL_FILE_MIME_TYPES, IMAGE_MIME_TYPES, PDF_MIME_TYPE } from "@/lib/files/constants";
+
 export const DEFAULT_NOTE_TITLE = "Untitled Note";
 
 // Matches the DB enum knowledge_item_type (001_initial_schema.sql) — only 'note' is buildable
@@ -24,10 +26,10 @@ export const itemIdSchema = z.string().uuid();
 
 export const versionIdSchema = z.string().uuid();
 
-// What POST /api/items can create today — note (Day 3) and website (Day 5). The remaining
-// KNOWLEDGE_ITEM_TYPES values (pdf/image/file/code_snippet) exist in the DB enum and the
-// search/filter surface (built ahead of their own Day 5/6 features) but have no create path yet.
-export const CREATABLE_ITEM_TYPES = ["note", "website"] as const;
+// What POST /api/items can create today — note/website (earlier Day 5) plus pdf/image/file
+// (this feature). code_snippet exists in the DB enum and the search/filter surface (built ahead
+// of its own later Day 5 feature) but has no create path yet.
+export const CREATABLE_ITEM_TYPES = ["note", "website", "pdf", "image", "file"] as const;
 
 export const createNoteSchema = z.object({
   type: z.literal("note"),
@@ -58,6 +60,25 @@ export const createBookmarkSchema = z.object({
 });
 
 export type CreateBookmarkInput = z.infer<typeof createBookmarkSchema>;
+
+const ALL_UPLOAD_MIME_TYPES = [PDF_MIME_TYPE, ...IMAGE_MIME_TYPES, ...GENERAL_FILE_MIME_TYPES] as const;
+
+// The file's bytes are already sitting in Storage by the time this request arrives (uploaded
+// directly from the browser, same architecture as avatars — see lib/files/verify-upload.ts's
+// comment for why) — this payload is metadata pointing at that upload, not the file itself.
+// `type` still has to be one of the three upload types explicitly (not derived from mime_type
+// here) so a mismatched pair (e.g. type: "pdf" with an image mime_type) is a validation error the
+// route can catch before ever touching Storage.
+export const createFileItemSchema = z.object({
+  type: z.enum(["pdf", "image", "file"]),
+  collection_id: z.string().uuid(),
+  storage_path: z.string().min(1).max(1024),
+  filename: z.string().trim().min(1, "Filename is required").max(255, "Filename is too long"),
+  mime_type: z.enum(ALL_UPLOAD_MIME_TYPES),
+  size_bytes: z.number().int().positive(),
+});
+
+export type CreateFileItemInput = z.infer<typeof createFileItemSchema>;
 
 export const updateItemSchema = z
   .object({
