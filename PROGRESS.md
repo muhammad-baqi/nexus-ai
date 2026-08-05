@@ -13,6 +13,20 @@ in its own entry, under a **"Not verified this session (manual retest needed):"*
 integration/component tests, typecheck, and lint are still run and green for every feature —
 only the browser-driven and at-scale checks are deferred.
 
+**🐛 Known bug reported by user, 2026-08-05, not yet investigated/reproduced — Auth flow
+confusion.** User-reported, live on a deployed environment (not this session's local dev): (1) a
+password-reset link came back "This link isn't valid — It may have already been used, or the link
+was copied incorrectly. Register again to get a fresh one." — the exact Supabase/`invalid`-status
+copy `/reset-password`'s flow shows for an expired/consumed `recovery` token
+(`app/verify-email/page.tsx`-equivalent status handling, `app/auth/confirm/route.ts`). (2)
+Separately, the user tried to register a new account and expected a fresh confirmation email tied
+to that new attempt, but ended up needing to use an old email/link instead of a new one — vague as
+reported, no repro steps yet. Needs a real investigation session: reproduce both against the
+actual environment the user hit (staging? production? which email address), check whether this is
+the known Supabase Auth rate-limit/cooldown on resending, an actual token-expiry mismatch, or a
+genuine bug in the confirm/reset flow. Not investigated this session — flagged here per explicit
+user instruction to log it and keep moving on the current feature.
+
 **2026-08-05 — Day 5 Website bookmarks — save flow + metadata background job shipped**
 (build-order-complete.md #20), squash-merged into `develop`. Resumed from a prior session's
 paused implementation (branch `feature/d5-website-bookmarks`, pushed to origin as a backup) —
