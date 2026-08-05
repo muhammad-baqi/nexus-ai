@@ -27,6 +27,132 @@ the known Supabase Auth rate-limit/cooldown on resending, an actual token-expiry
 genuine bug in the confirm/reset flow. Not investigated this session — flagged here per explicit
 user instruction to log it and keep moving on the current feature.
 
+**2026-08-05 — session paused cleanly at end of day.** Day 5 is now 9/13 (Website Bookmarks'
+4 lines + File Uploads' 5 lines below, both shipped and squash-merged into `develop` this
+session). Local Supabase was never started this session (not needed — no feature this session
+touched RLS/Auth/Storage behavior that required live-testing against it, per the session-wide
+testing-scope note above); Docker (`docker compose up -d app`) was stopped cleanly at the end of
+this session. **To resume:** `git checkout develop && git pull`, `docker compose up -d app` (add
+`npx supabase start` first only if the next feature needs live DB/RLS/Storage testing). Next up
+per `build-order-complete.md`: #22 Code Snippets, then #23 Bulk import stress test + Day 5 QA
+gate — see the "Not verified this session" notes on both shipped features below for what still
+needs a manual, real-browser pass before Day 5 can be called fully done.
+
+**2026-08-05 — Day 5 File uploads — PDFs, Images, general Files shipped**
+(build-order-complete.md #21, bundled as one feature/branch/commit per its own prompt — "Build the
+shared upload mechanism and all three types" isn't a real increment split across five separate
+merges — covering all 5 PROGRESS.md lines below it): drag-and-drop + file-picker batch upload,
+PDF in-app preview + background text-extraction, Image thumbnail/full-size rendering, general File
+inline-preview-or-metadata, and size/type limits enforced client- and server-side.
+
+No new migration for the item tables themselves — `file_assets` (with RLS) already existed from
+`supabase/migrations/001_initial_schema.sql`, matching `website_metadata`'s precedent. New
+`supabase/migrations/007_file_uploads.sql`: a private `files` Storage bucket (RLS scoped to
+`{owner_id}/...`, same pattern as `002_avatars_storage.sql`'s `avatars` bucket) plus folding
+`file_assets.extracted_text` into `knowledge_items.search_vector` (mirrors `004_search_ranking.sql`'s
+tag-folding — same `knowledge_item_search_vector()` shared function, extended rather than
+duplicated, so the base title/description trigger and the tag triggers pick up PDF text
+automatically). Files upload **directly from the browser to Storage** (`components/files/
+upload-file-form.tsx`), same architecture this repo already established for avatars — the right
+call for PDFs up to 50MB, which would strain a Next.js route handler's body-size limits. `POST
+/api/items` (new `createFileItem` branch) then re-validates everything authoritatively:
+`lib/files/validate-upload.ts` re-checks the declared size/type server-side, and — the actual
+security-relevant step — `lib/files/verify-upload.ts` fetches the first 4KB of the just-uploaded
+object via a signed URL + Range request and sniffs its real content (`lib/files/sniff-content.ts`,
+hand-rolled magic-byte signatures for PDF/PNG/JPEG/GIF/WebP/ZIP-container/OLE-compound/plain-text
+— no new dependency, same "small enough to hand-roll and unit-test" reasoning `safe-fetch.ts` used
+for the bookmarks feature's SSRF guard) against the declared MIME type, rejecting (and cleaning up
+the orphaned Storage object) on any mismatch — File_Uploads.md's "MIME type matching the file's
+actual content, not just its extension" requirement. PDF text extraction
+(`lib/files/extract-pdf-text.ts`, new `pdf-parse` dependency) runs via `after()` exactly like the
+bookmarks feature's metadata job — never throws, marks `extraction_status: 'failed'` (visible to
+the user as "not full-text searchable") on a scanned/corrupt/encrypted PDF rather than failing the
+upload. `GET /api/items/:id` now embeds `file_asset` with a freshly-signed 10-minute download URL
+(`lib/items/file-asset.ts` + `lib/files/signed-url.ts`, mirrors the website-metadata/avatar signed-
+URL pattern). `DELETE /api/items/:id/permanent` now also removes the Storage object (previously
+only deleted the DB row) — fetches `file_assets.storage_path` *before* the cascading delete removes
+it. New `components/files/file-item-view.tsx` (one shared component for all three types, each with
+type-specific preview: PDF via a plain `<iframe>` — a deliberate choice over bundling a pdf.js
+viewer — Image via `next/image` with `fill`/`sizes` for real on-the-fly resizing, general File via
+an inline `<pre>` text preview when the MIME type is plain-text-ish, else metadata + Download only)
+plus the same favorite/archive/trash/tags/move actions every other item-detail view already has.
+`next.config.ts` now allowlists the Supabase Storage host in `images.remotePatterns` (derived from
+`NEXT_PUBLIC_SUPABASE_URL` at config-load time) — safe to allowlist unlike the bookmarks feature's
+favicon/OG-image URLs, since this is *our own* Storage host known at build/deploy time, not an
+arbitrary third-party one. `CollectionDetailView` gained a plain emoji type-marker per item type
+(📝/🔗/📄/🖼️/📎/💻) — not an actual thumbnail in list/grid view (see below).
+
+**New dependencies** (flagging per CLAUDE.md): `pdf-parse` + `@types/pdf-parse` — no existing
+dependency does PDF text extraction; pure-JS (no native/canvas dependency, unlike using `pdfjs-dist`
+directly), and `npm audit` confirmed it introduces no new/elevated vulnerabilities (the 6
+pre-existing moderate/high advisories on this branch are all transitive deps of `next`/tooling,
+unrelated to this addition).
+
+Self-review (`code-reviewer` subagent) caught two real issues, both fixed: (1) the size/type
+validation (`validateFileUpload`) originally ran *before* authentication, so a request that failed
+only that check returned 400 without ever creating the authenticated Storage client needed to clean
+up the already-uploaded object — reordered so auth + the `storage_path` ownership check run first,
+and the size/type-mismatch branch now cleans up too; (2) the size cap only ever checked the
+client-declared `size_bytes` field from the POST body, which a client could simply lie about to
+slide a file under a per-type cap while the real (larger) bytes already sat in Storage — fixed by
+having `verifyUploadedFileContent` also parse the real object size out of its Range-response
+headers (`Content-Range` on the common 206 case, `Content-Length` on a 200 for an object smaller
+than the requested range) and using that authoritative value both for the cap re-check and for what
+gets stored in `file_assets.size_bytes`. Self-review also raised a third, more serious-sounding
+finding — that `search_vector` would go stale on title/description edits and silently drop PDF
+text/tags from search — which was investigated and confirmed a **false positive**: `004_search_ranking.sql`
+already redefined the base `knowledge_items_search_vector_update()` trigger function to delegate to
+the shared `knowledge_item_search_vector()` function this migration extends via `create or replace
+function` (same name/signature), and Postgres threads a redefined function through to every trigger
+already bound to it by name without needing the trigger itself recreated — the exact mechanic this
+repo's own `set_updated_at()` redefinition already relies on and had "verified live" in the Day 4
+PROGRESS.md entry below. Not re-verified live this session (local Supabase wasn't started — see the
+session-close note above), but high-confidence from the migration history alone; flagged here in
+case a future session wants to double-check it live before relying on it further.
+
+Self-review also flagged two items deliberately left as-is rather than fixed, both worth revisiting
+before Day 5 is called fully done: (a) **no periodic orphan-Storage-object cleanup job** — if a
+browser closes the tab after the direct-to-Storage upload succeeds but before `POST /api/items`
+ever fires, that object is orphaned with nothing to sweep it (File_Uploads.md's own Error States
+section anticipates this exact gap needing "a periodic cleanup job"); every *request-time* rejection
+path does clean up correctly (self-review confirmed and this is unit-tested), just not this
+no-second-request case. (b) **no real thumbnails in list/grid views** — `CollectionDetailView`
+currently shows a static emoji marker for every item type rather than an actual image thumbnail for
+`image`-type items, and `GET /api/items` (backed by `search_knowledge_items()`) doesn't return any
+`file_asset`/signed-URL data on list rows at all, so there's no data to render one from without a
+further change to that RPC/route. File_Uploads.md's acceptance criteria explicitly call for
+thumbnails "in list/grid views," so this is a real, named gap, not just a nice-to-have — next
+session should either build it or make an explicit, documented scope decision to defer it (matching
+this repo's usual pattern for such calls, e.g. Day 3's version-history-boundary decision).
+
+661/661 unit/integration/component tests green (106 new: `lib/files/*` — constants/validate-upload/
+sniff-content/verify-upload/extract-pdf-text/signed-url — `lib/items/file-asset.ts`,
+`lib/format/format-bytes.ts`, the extended `POST /api/items`, `GET /api/items/:id`, and `DELETE
+/api/items/:id/permanent` route tests, `UploadFileForm`, `FileItemView`, and the extended
+`CollectionDetailView` tests), typecheck clean, lint clean on every file this feature touched (the
+one new `react-hooks/set-state-in-effect` instance in `FileItemView`'s text-preview effect matches
+the same pre-existing, already-accepted pattern used by 6 other files in this codebase — confirmed
+via `npm run lint` before this feature touched anything). `npm run build` hit the same
+already-documented, pre-existing local-only Turbopack `/_not-found` prerender failure noted in the
+Day 2 QA gate entry below (compile and typecheck both succeeded first; the failure is unrelated to
+any file this feature touched) — not re-diagnosed here, consistent with every prior feature that's
+hit it.
+
+**Not verified this session (manual retest needed):** per the session-wide note at the top of this
+file, load/stress testing (the "bulk import stress test" is its own separate, not-yet-started
+build-order item, #23) and live-browser verification were both skipped for this feature entirely —
+unlike the Website Bookmarks feature above (which at least had a prior session's real Playwright
+run to fall back on), **this feature has zero real-browser or real-Supabase verification of any
+kind yet** — no local Supabase Storage bucket was ever created/tested against, no real upload was
+ever driven through a browser, and no `e2e/*.spec.ts` file was written for it at all. Before
+trusting this in production: (1) run `supabase start` (creates the local `files` bucket for the
+first time from this migration) and manually drive a real upload of each of the three types
+through the browser, including an oversized file and a PDF with no text layer, per
+`build-order-complete.md` #21's own test note; (2) write and run an `e2e/files.spec.ts` smoke test;
+(3) manually verify the Supabase Storage RLS policies directly (a second real account attempting to
+read/delete another user's file's storage path) the way every other feature's Storage/RLS surface
+in this codebase has been.
+
 **2026-08-05 — Day 5 Website bookmarks — save flow + metadata background job shipped**
 (build-order-complete.md #20), squash-merged into `develop`. Resumed from a prior session's
 paused implementation (branch `feature/d5-website-bookmarks`, pushed to origin as a backup) —
@@ -822,7 +948,7 @@ CLI commands don't default to prod.
   2026-08-04 entry above (41ms worst case).
 - [ ] **v0.2 released to production** ✅
 
-## Day 5 — Knowledge Sources — release Friday (staging only) (4/13)
+## Day 5 — Knowledge Sources — release Friday (staging only) (9/13)
 
 - [x] Website bookmarks — paste URL → immediate save, async metadata fetch — see the 2026-08-05
   entry above
@@ -831,11 +957,12 @@ CLI commands don't default to prod.
 - [x] Website bookmarks — manual retry on metadata failure — see the 2026-08-05 entry above
 - [ ] Website bookmarks — screenshot (optional, best-effort)
 - [ ] Website bookmarks — reading mode (optional, time-permitting)
-- [ ] File uploads — PDFs (upload, in-app preview, download)
-- [ ] File uploads — PDF text extraction background job (search-indexed; graceful failure state)
-- [ ] File uploads — Images (upload, thumbnail + full-size preview, download)
-- [ ] File uploads — General files (allow-listed types, metadata view or inline preview, download)
-- [ ] File uploads — size/type limits enforced client- and server-side
+- [x] File uploads — PDFs (upload, in-app preview, download) — see the 2026-08-05 entry above.
+  **Not yet manually verified live** — see that entry's "Not verified this session" note.
+- [x] File uploads — PDF text extraction background job (search-indexed; graceful failure state) — see the 2026-08-05 entry above. Not yet manually verified live.
+- [x] File uploads — Images (upload, thumbnail + full-size preview, download) — see the 2026-08-05 entry above; list/grid-view thumbnails specifically are a named, not-yet-closed gap (self-review). Not yet manually verified live.
+- [x] File uploads — General files (allow-listed types, metadata view or inline preview, download) — see the 2026-08-05 entry above. Not yet manually verified live.
+- [x] File uploads — size/type limits enforced client- and server-side — see the 2026-08-05 entry above. Not yet manually verified live.
 - [ ] Code snippets — create/edit, language select, syntax highlighting, copy-to-clipboard
 - [ ] Bulk import stress test (websites + files)
 - [ ] **Staging deploy — no production release today**
