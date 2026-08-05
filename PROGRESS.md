@@ -5,11 +5,19 @@
 > and release cadence are `docs/00_Project/Roadmap.md`.
 > `[ ]` = not started · `[~]` = in progress · `[x]` = done & committed.
 
-**Session paused mid-feature, 2026-08-05.** Day 4 (below) is shipped and merged into `develop`.
-Currently `[~]` in progress: **Day 5, Website bookmarks — save flow + metadata background job**
-(build-order-complete.md #20), on branch `feature/d5-website-bookmarks` (pushed to origin as a
-backup). One commit so far — implementation is functionally complete, not yet self-reviewed or
-merged:
+**2026-08-05 — session-wide testing scope note.** For the remainder of Day 5 (this session),
+load/stress testing and live-browser (Playwright/`claude-in-chrome`) verification are being
+**deliberately skipped per explicit user instruction**, to keep shipping velocity up — the user
+will test those manually, retroactively. Every feature below that skips them says so explicitly
+in its own entry, under a **"Not verified this session (manual retest needed):"** line. Unit/
+integration/component tests, typecheck, and lint are still run and green for every feature —
+only the browser-driven and at-scale checks are deferred.
+
+**2026-08-05 — Day 5 Website bookmarks — save flow + metadata background job shipped**
+(build-order-complete.md #20), squash-merged into `develop`. Resumed from a prior session's
+paused implementation (branch `feature/d5-website-bookmarks`, pushed to origin as a backup) —
+that session's work was functionally complete but not yet self-reviewed or merged; this session
+ran self-review, fixed what it found, and merged:
 
 No new migration — `website_metadata` (with RLS) already existed from
 `supabase/migrations/001_initial_schema.sql`. New `lib/bookmarks/` (URL normalization for
@@ -38,31 +46,44 @@ doesn't; no new/elevated vulnerabilities from it (`npm audit` checked). Screensh
 Reading Mode are out of scope — both explicitly "Optional"/"if time allows" in
 `Website_Bookmarks.md`.
 
-556/556 unit/integration/component tests green (34 new across `lib/bookmarks/*`,
-`lib/items/website-metadata.ts`, the extended `POST /api/items` and `GET /api/items/:id` route
-tests, the new retry route, `SaveBookmarkForm`, and `BookmarkView`), typecheck clean, lint clean on
-every touched file. New `e2e/bookmarks.spec.ts` (`@smoke`) — save/poll/edit/reload,
-unreachable-URL/"Metadata unavailable"/Retry, and duplicate-prompt/"View existing" — passes green
-run standalone against real local Supabase + a real fetch to `https://example.com/` (IANA-reserved
-per RFC 2606, used instead of a live third-party site specifically to keep this deterministic) and
-a guaranteed-unreachable `.invalid` domain for the failure path.
+Self-review (`code-reviewer` subagent, run this session) caught one real, critical issue, fixed:
+**SSRF** — `fetchBookmarkMetadata` fetched an arbitrary user-supplied URL server-side with zero
+protection against internal/private-network targets (e.g. `http://169.254.169.254/...` cloud
+metadata, `http://localhost:<port>`, RFC1918 ranges), reachable from both the create path and the
+no-rate-limit retry route, with the response reflected back into the item's visible
+title/description/og-image. `fetch`'s automatic redirect-following also meant a check on only the
+initial URL wouldn't have stopped a public URL that 302s into an internal one. Fixed with new
+`lib/bookmarks/safe-fetch.ts`: resolves/validates the hostname (literal IP or DNS lookup) against
+loopback/private/link-local/reserved ranges before every fetch, following redirects manually so
+each hop is independently re-validated (not left to native `fetch` redirect-following), plus a
+response-body size cap (`readBodyWithLimit`, 5MB) so a spoofed `Content-Type: text/html` can't
+stream an unbounded body into memory ahead of the 10s timeout. Self-review's two secondary findings
+were left as accepted, documented trade-offs rather than fixed: the duplicate-check-then-insert
+race under concurrent submits (acceptable — the product already allows intentional duplicates, and
+there's no data-corruption risk, just a possible skipped prompt) and `findDuplicateBookmark`'s O(n)
+in-JS scan (same "small list, compare in JS" pattern already accepted for `getOrCreateTag`).
 
-**Not yet done, in this order:**
-1. `code-reviewer` subagent self-review on the diff — not run this session.
-2. A trustworthy full-`@smoke`-suite regression check. A same-session run of the whole suite
-   together (not just this feature's own spec) showed failures across several *other*, unrelated
-   specs too (login, collections, notes, trash ×2, dashboard) in addition to this feature's own —
-   matching the shape of this repo's already-documented Turbopack/parallel-run dev-server
-   staleness flakiness (see the Day 3/4 entries below, and the standing "Turbopack cold-compile
-   causes spurious e2e failures" note), but **not yet confirmed via the established stash +
-   rerun-against-a-clean-baseline check** — don't treat it as confirmed pre-existing without doing
-   that check first; it could also be a real regression from `collection-detail-view.tsx`'s shared
-   changes.
-3. Squash-merge into `develop`, tick this line in the Day 5 checklist below, delete the branch.
+574/574 unit/integration/component tests green (52 new since the prior session's 556: the original
+34 across `lib/bookmarks/*`, `lib/items/website-metadata.ts`, the extended `POST /api/items` and
+`GET /api/items/:id` route tests, the new retry route, `SaveBookmarkForm`, and `BookmarkView`, plus
+18 new this session for `lib/bookmarks/safe-fetch.ts`'s SSRF-guard/redirect/body-cap behavior),
+typecheck clean, lint clean on every touched file.
 
-**To resume:** `git checkout feature/d5-website-bookmarks`, `npx supabase start`,
-`docker compose up -d app`. Local Supabase + Docker were stopped cleanly at the end of this
-session (see below) — both need restarting before resuming.
+**Not verified this session (manual retest needed):** per explicit instruction this session,
+load/stress testing and live-browser verification were skipped for this feature (see the
+session-wide note at the top of this file). `e2e/bookmarks.spec.ts` (`@smoke`, covering
+save/poll/edit/reload, unreachable-URL/"Metadata unavailable"/Retry, and duplicate-prompt/"View
+existing") was written and confirmed green in the *prior* session (standalone, against real local
+Supabase + a real fetch to `https://example.com/` per RFC 2606, and a guaranteed-unreachable
+`.invalid` domain for the failure path) but was **not re-run this session**, including after this
+session's SSRF fix — the fix only changes internal request-validation logic the e2e spec doesn't
+exercise (it fetches public example.com/.invalid, neither of which the new guard blocks/affects),
+so a regression here is unlikely, but it's still an actual live-browser proof this feature is
+missing until manually re-run. A full `@smoke`-suite regression run (not just this feature's own
+spec) was also not attempted this session — the prior session's attempt at that showed failures
+across several *other*, unrelated specs (login, collections, notes, trash ×2, dashboard) matching
+this repo's already-documented Turbopack/parallel-run dev-server staleness flakiness, but that was
+never confirmed via the established stash + rerun-against-a-clean-baseline check either.
 
 Previously, 2026-08-04 — **Day 4 Dashboard — full widgets shipped** (build-order-complete.md #18, the 4
 Dashboard lines below bundled into one feature — same rationale as Search: a Dashboard without
@@ -787,13 +808,13 @@ CLI commands don't default to prod.
   2026-08-04 entry above (41ms worst case).
 - [ ] **v0.2 released to production** ✅
 
-## Day 5 — Knowledge Sources — release Friday (staging only) (0/13)
+## Day 5 — Knowledge Sources — release Friday (staging only) (4/13)
 
-- [~] Website bookmarks — paste URL → immediate save, async metadata fetch — **in progress, see
-  resume note at the top of this file**
-- [~] Website bookmarks — metadata extraction (title, description, OG image, favicon, canonical URL, domain) — **in progress, see resume note above**
-- [~] Website bookmarks — duplicate detection prompt (non-blocking) — **in progress, see resume note above**
-- [~] Website bookmarks — manual retry on metadata failure — **in progress, see resume note above**
+- [x] Website bookmarks — paste URL → immediate save, async metadata fetch — see the 2026-08-05
+  entry above
+- [x] Website bookmarks — metadata extraction (title, description, OG image, favicon, canonical URL, domain) — see the 2026-08-05 entry above
+- [x] Website bookmarks — duplicate detection prompt (non-blocking) — see the 2026-08-05 entry above
+- [x] Website bookmarks — manual retry on metadata failure — see the 2026-08-05 entry above
 - [ ] Website bookmarks — screenshot (optional, best-effort)
 - [ ] Website bookmarks — reading mode (optional, time-permitting)
 - [ ] File uploads — PDFs (upload, in-app preview, download)
