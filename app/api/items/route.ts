@@ -1,14 +1,19 @@
-import { NextResponse, type NextRequest } from "next/server";
+import { after, NextResponse, type NextRequest } from "next/server";
 
+import { fetchBookmarkMetadata } from "@/lib/bookmarks/fetch-bookmark-metadata";
+import { normalizeUrlForDuplicateCheck } from "@/lib/bookmarks/normalize-url";
 import { verifyCollectionOwnership } from "@/lib/items/verify-collection-ownership";
 import { requireUser } from "@/lib/supabase/require-user";
 import { createClient } from "@/lib/supabase/server";
 import {
+  createBookmarkSchema,
   createNoteSchema,
   DEFAULT_ITEMS_PAGE_LIMIT,
   DEFAULT_NOTE_TITLE,
   listItemsQuerySchema,
 } from "@/lib/validation/items";
+
+type SupabaseClient = Awaited<ReturnType<typeof createClient>>;
 
 // The primary listing/search endpoint (API_Design.md) — also backs Global Search when `q` is
 // present, with filters/sort/pagination. Backed by the search_knowledge_items() Postgres
@@ -110,10 +115,23 @@ export async function GET(request: NextRequest) {
   return NextResponse.json({ items, total, page, limit });
 }
 
-// Only Notes can be created today — a `type` discriminator gets added once Website
-// Bookmarks/Files/etc. ship (Day 5), not pre-built now for a type that doesn't exist yet.
+// Dispatches on the required `type` discriminator — the two creatable types (note, website) have
+// different payload shapes and create paths, per CREATABLE_ITEM_TYPES in lib/validation/items.ts.
 export async function POST(request: NextRequest) {
-  const body = await request.json().catch(() => null);
+  const body: unknown = await request.json().catch(() => null);
+  const type =
+    body && typeof body === "object" && "type" in body ? (body as { type: unknown }).type : undefined;
+
+  if (type === "website") return createBookmark(body);
+  if (type === "note") return createNote(body);
+
+  return NextResponse.json(
+    { error: { code: "invalid_request", message: "type must be 'note' or 'website'." } },
+    { status: 400 },
+  );
+}
+
+async function createNote(body: unknown) {
   const result = createNoteSchema.safeParse(body);
 
   if (!result.success) {
@@ -161,4 +179,122 @@ export async function POST(request: NextRequest) {
   }
 
   return NextResponse.json(data, { status: 201 });
+}
+
+// Fetches every one of the caller's own (non-trashed) bookmarks and compares normalized URLs in
+// JS, rather than a dot-notation embedded-resource filter — same "small list, compare in JS"
+// reasoning lib/items/tags.ts's getOrCreateTag already documents for this app's scale. RLS on
+// website_metadata (scoped via its knowledge_items.owner_id subquery, 001_initial_schema.sql)
+// already restricts this to the caller's own rows — the real authorization boundary, not this
+// query's shape (CLAUDE.md rule #1).
+async function findDuplicateBookmark(supabase: SupabaseClient, url: string): Promise<string | null> {
+  const normalized = normalizeUrlForDuplicateCheck(url);
+  if (!normalized) return null;
+
+  const { data, error } = await supabase
+    .from("website_metadata")
+    .select("knowledge_item_id, url, canonical_url, knowledge_items(deleted_at)");
+
+  if (error) {
+    console.error("[api/items] duplicate check failed:", error);
+    return null;
+  }
+
+  type Row = {
+    knowledge_item_id: string;
+    url: string;
+    canonical_url: string | null;
+    knowledge_items: { deleted_at: string | null } | null;
+  };
+
+  const match = ((data ?? []) as unknown as Row[]).find((row) => {
+    if (row.knowledge_items?.deleted_at) return false;
+    const candidate = row.canonical_url ?? row.url;
+    return normalizeUrlForDuplicateCheck(candidate) === normalized;
+  });
+
+  return match?.knowledge_item_id ?? null;
+}
+
+async function createBookmark(body: unknown) {
+  const result = createBookmarkSchema.safeParse(body);
+
+  if (!result.success) {
+    return NextResponse.json(
+      {
+        error: {
+          code: "invalid_request",
+          message: result.error.issues[0]?.message ?? "Invalid bookmark.",
+        },
+      },
+      { status: 400 },
+    );
+  }
+
+  const supabase = await createClient();
+  const { user, response } = await requireUser(supabase);
+  if (!user) return response;
+
+  const { url, collection_id, confirmDuplicate } = result.data;
+
+  const ownsCollection = await verifyCollectionOwnership(supabase, collection_id, user.id);
+  if (!ownsCollection) {
+    return NextResponse.json(
+      { error: { code: "not_found", message: "This collection doesn't exist." } },
+      { status: 404 },
+    );
+  }
+
+  // Non-blocking per Website_Bookmarks.md's Duplicate Detection section: surfaced as a normal
+  // 200 response the client turns into a prompt, not a 4xx rejection — the user can still choose
+  // to save a duplicate intentionally by resubmitting with confirmDuplicate: true.
+  // Accepted race: two concurrent submits of the same URL (double-click, two tabs) can both pass
+  // this check before either insert lands, and there's no unique DB constraint stopping it either
+  // — acceptable since the product allows intentional duplicates anyway; the worst case is the
+  // prompt gets silently skipped under a race, not data corruption.
+  if (!confirmDuplicate) {
+    const existingItemId = await findDuplicateBookmark(supabase, url);
+    if (existingItemId) {
+      return NextResponse.json({ duplicate: true, existingItemId });
+    }
+  }
+
+  // Item is created and visible immediately, title as the raw URL — metadata fills in
+  // asynchronously below. Never blocked on the metadata fetch (Website_Bookmarks.md's Save Flow).
+  const { data: item, error: itemError } = await supabase
+    .from("knowledge_items")
+    .insert({
+      owner_id: user.id,
+      collection_id,
+      type: "website",
+      title: url,
+    })
+    .select()
+    .single();
+
+  if (itemError) {
+    console.error("[api/items] bookmark create failed:", itemError);
+    return NextResponse.json(
+      { error: { code: "create_failed", message: "Something went wrong saving this bookmark." } },
+      { status: 500 },
+    );
+  }
+
+  const { error: metadataError } = await supabase
+    .from("website_metadata")
+    .insert({ knowledge_item_id: item.id, url, fetch_status: "pending" });
+
+  if (metadataError) {
+    // The item itself already saved successfully — a failed metadata-row insert shouldn't fail
+    // the whole save (CLAUDE.md rule #7). There's simply nothing for the background job below to
+    // update; GET will show the item with no metadata row rather than a broken item.
+    console.error("[api/items] website_metadata create failed:", metadataError);
+  } else {
+    // Runs after this response has been sent (CLAUDE.md rule #5 — never inline). Closes over the
+    // same already-authenticated `supabase` client built above rather than re-deriving it from
+    // cookies inside the deferred callback.
+    after(() => fetchBookmarkMetadata(supabase, item.id, url));
+  }
+
+  return NextResponse.json(item, { status: 201 });
 }

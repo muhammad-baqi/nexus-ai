@@ -16,25 +16,6 @@ Format per feature:
 
 ---
 
-## Worked example — Register / Login (Day 2)
-- [ ] Registering with a password under 8 characters shows inline validation before submit, no request sent
-- [ ] Registering with an already-used email behaves identically (same "check your email" screen) as a new registration
-- [ ] Logging in with a correct email + wrong password shows the generic "Invalid email or password" message
-- [ ] Logging in with an unverified account shows the verify-email prompt with a working resend button
-- [ ] Resending the verification email twice within 60 seconds is rate-limited with a clear message
-
-## Worked example — Website Bookmarks save flow (Day 5)
-- [ ] Pasting a valid URL creates a visible item immediately, before metadata resolves
-- [ ] Pasting an unreachable URL still creates the item, shows "metadata unavailable" within ~10s, and offers manual retry
-- [ ] Pasting a URL that canonicalizes to an already-saved bookmark shows the non-blocking duplicate prompt
-- [ ] Manually retrying a failed metadata fetch re-enqueues exactly one job, not a retry loop
-
----
-
-*(Real feature headings get appended below this line as `/ship-feature` runs, in the order
-built — delete these two worked examples once the first real feature's cases are recorded, or
-leave them as a style reference; either is fine.)*
-
 ## Register (Day 2)
 - [x] Password under 8 characters shows an inline error, no Supabase call is made
 - [x] Password with no digit shows an inline error, no Supabase call is made
@@ -521,3 +502,89 @@ RPC instead of a plain `.from()` query):
       complete login against local Supabase — see the `host.docker.internal` memory note): empty
       query shows items immediately, typing a query filters to matching items only, filter (type)
       + sort (title) combine and return live-sorted results.
+
+## Website Bookmarks — save flow + metadata background job (Day 5)
+
+`lib/validation/items.test.ts` (extended — `createNoteSchema` gains the `type` literal,
+`createBookmarkSchema` is new):
+- [x] `createNoteSchema` rejects a missing/wrong `type`
+- [x] `createBookmarkSchema` accepts a valid http(s) URL, rejects an invalid format, rejects a
+      non-http(s) scheme (`javascript:`, `ftp:`), rejects a missing/wrong `type`
+
+`lib/bookmarks/normalize-url.test.ts` (new — pure):
+- [ ] Invalid/unparseable URL returns `null`
+- [ ] Lowercases scheme + host, drops a default port, strips the fragment and a trailing slash
+- [ ] Strips known tracking params (`utm_*`, `fbclid`, `gclid`, `ref`, `igshid`) and sorts
+      remaining query params for stable comparison
+- [ ] Two URLs differing only by tracking params/case/trailing slash normalize identically
+
+`lib/bookmarks/parse-html-metadata.test.ts` (new — pure, fixture HTML):
+- [ ] OG tags (`og:title`/`og:description`/`og:image`) are preferred over `<title>`/meta
+      description when both are present
+- [ ] Falls back to `<title>`/`<meta name="description">` when OG tags are absent
+- [ ] `<link rel="canonical">` extracted; falls back to the request URL when absent
+- [ ] `<link rel="icon">` extracted; falls back to `/favicon.ico` on the domain when absent
+- [ ] Malformed/incomplete HTML (no `<head>`, unclosed tags) doesn't throw — extracts whatever
+      is parseable
+
+`lib/bookmarks/fetch-bookmark-metadata.test.ts` (new — mocked `global.fetch`):
+- [ ] A successful fetch updates `website_metadata` (canonical_url/domain/og_image_url/
+      favicon_url, `fetch_status: 'success'`) and the item's title — only when the title is
+      still the placeholder URL, not clobbering a title the user already edited
+- [ ] A network error / unreachable host marks `fetch_status: 'failed'`, item stays usable
+- [ ] A non-HTML `Content-Type` response is treated as a graceful failure, not parsed
+- [ ] The fetch is aborted and marked `failed` after the ~10s timeout rather than hanging
+- [ ] Never throws out of the function on any failure path (it runs after the response is sent)
+
+`lib/items/website-metadata.test.ts` (new — mirrors `lib/items/tags.test.ts`'s `fetchItemTags` coverage):
+- [x] returns the metadata row for the item
+- [x] returns null and logs when the query fails
+
+`app/api/items/route.test.ts` (extended — POST gains the `type` discriminator):
+- [x] Invalid URL format is rejected 400 before any DB write
+- [x] A non-http(s) URL scheme (e.g. `javascript:`) is rejected
+- [x] Saving a valid URL creates the item immediately with `fetch_status: 'pending'` and the raw
+      URL as title, without waiting on any network fetch
+- [x] A URL that normalizes to match an existing non-trashed bookmark's `url`/`canonical_url`
+      returns the non-blocking duplicate signal (`{ duplicate: true, existingItemId }`), not a
+      hard rejection, and does not create a second item
+- [x] `confirmDuplicate: true` creates the bookmark anyway despite a match
+- [x] A match against a *trashed* bookmark is not flagged (the other-user case is the standing
+      RLS boundary on `website_metadata`, not re-tested per testing.md — see qa-checklist.md)
+- [x] (added) type is required — missing or an unsupported value is rejected 400
+- [x] (added) still returns 201 when the `website_metadata` insert itself fails, but does not
+      enqueue the background job (nothing for it to update)
+
+`app/api/items/[id]/metadata/retry/route.test.ts` (new):
+- [x] Resets `fetch_status` to `pending` and re-enqueues the job for the caller's own website item
+- [x] 404 for an item that doesn't belong to the caller or doesn't exist
+- [x] 400 (or equivalent) for an item that isn't `type: 'website'`
+
+`app/api/items/[id]/route.test.ts` (extended):
+- [x] GET embeds `website_metadata` alongside `tags` for a `website`-type item (and confirms a
+      note-type item never queries `website_metadata` at all)
+- [x] PATCH edits title/description on a website item without writing a `note_versions` row
+      (pre-existing "version-write logic is skipped for non-note item types" case already
+      exercised this with `type: "website"` specifically)
+
+`components/bookmarks/save-bookmark-form.test.tsx` (new — mirrors `create-collection-form.test.tsx`'s toggle/error/success pattern):
+- [x] starts collapsed, expands into a form, shows an inline error for an empty URL without
+      calling fetch, posts and navigates to the created item on success, shows the server's
+      validation message inline, shows the non-blocking duplicate prompt with working "View
+      existing" / "Save anyway" actions
+
+`components/bookmarks/bookmark-view.test.tsx` (new):
+- [x] shows "Fetching metadata…" while `fetch_status` is pending
+- [x] polls and picks up metadata once it resolves to success, without a manual refresh
+- [x] shows "Metadata unavailable" + Retry on a failed fetch; Retry calls the retry endpoint and
+      resumes polling
+- [x] renders no favicon/preview image when there's no metadata at all
+- [x] Edit/Save toggle: typing doesn't autosave (no PATCH until Save is clicked)
+- [x] shows a load error when the initial fetch fails
+
+`e2e/bookmarks.spec.ts` (new, `@smoke`):
+- [ ] Paste a real reachable URL → item visible immediately → metadata fills in without a manual
+      refresh → edit the title → persists on reload
+- [ ] Paste an unreachable URL → item still saves → "metadata unavailable" shown → Retry
+- [ ] Paste a URL duplicating an already-saved bookmark → duplicate prompt → "View existing"
+      navigates to it

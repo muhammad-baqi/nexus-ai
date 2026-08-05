@@ -170,6 +170,45 @@ describe("GET /api/items/:id", () => {
     expect(consoleError).toHaveBeenCalled();
     consoleError.mockRestore();
   });
+
+  it("embeds website_metadata for a website-type item", async () => {
+    getUser.mockResolvedValue({ data: { user: { id: "user-1" } } });
+    queueResponse("knowledge_items", {
+      data: { id: VALID_ID, type: "website", title: "https://example.com" },
+      error: null,
+    });
+    queueResponse("website_metadata", {
+      data: {
+        url: "https://example.com",
+        canonical_url: "https://example.com/",
+        domain: "example.com",
+        og_image_url: null,
+        favicon_url: "https://example.com/favicon.ico",
+        fetch_status: "success",
+      },
+      error: null,
+    });
+
+    const response = await GET(requestFor("GET"), { params });
+
+    expect(await response.json()).toMatchObject({
+      website_metadata: { domain: "example.com", fetch_status: "success" },
+    });
+  });
+
+  it("does not query website_metadata for a note-type item", async () => {
+    getUser.mockResolvedValue({ data: { user: { id: "user-1" } } });
+    queueResponse("knowledge_items", {
+      data: { id: VALID_ID, type: "note", title: "Trip planning" },
+      error: null,
+    });
+
+    const response = await GET(requestFor("GET"), { params });
+    const body = await response.json();
+
+    expect(fromCalls.website_metadata).toBeUndefined();
+    expect(body).not.toHaveProperty("website_metadata");
+  });
 });
 
 describe("PATCH /api/items/:id", () => {

@@ -3,6 +3,16 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const getUser = vi.fn();
 const rpc = vi.fn();
+// vi.hoisted: these are referenced inside vi.mock() factories below, which are themselves
+// hoisted above regular top-level const declarations — a plain `const after = ...` here would
+// throw "Cannot access 'after' before initialization" once the hoisted mock factory runs first.
+const { after, fetchBookmarkMetadata } = vi.hoisted(() => ({
+  fetchBookmarkMetadata: vi.fn(),
+  // Invokes the deferred callback immediately (rather than actually deferring it) so a test can
+  // assert on its effects synchronously — the real next/server after() only guarantees it runs
+  // after the response is sent, which isn't itself something a unit test needs to model.
+  after: vi.fn((callback: () => void) => callback()),
+}));
 const VALID_COLLECTION_ID = "123e4567-e89b-12d3-a456-426614174000";
 const VALID_TAG_ID = "223e4567-e89b-12d3-a456-426614174000";
 
@@ -19,8 +29,13 @@ interface QueryBuilder {
   then: (resolve: (value: ResolvedValue) => void) => void;
 }
 
+// A per-table FIFO queue: resolveWith() enqueues a response, each terminal await (via `then`)
+// consumes the next one in order. A single resolveWith() call still works exactly as before for
+// every existing single-call-per-table test; the queue only matters for the newer bookmark paths
+// that call the same table (website_metadata) more than once per request (a duplicate-check
+// SELECT, then an INSERT).
 function createQueryBuilder(): QueryBuilder {
-  let resolvedValue: ResolvedValue = { data: null, error: null };
+  const queue: ResolvedValue[] = [];
   const builder: QueryBuilder = {
     select: vi.fn(() => builder),
     insert: vi.fn(() => builder),
@@ -29,10 +44,10 @@ function createQueryBuilder(): QueryBuilder {
     order: vi.fn(() => builder),
     single: vi.fn(() => builder),
     resolveWith: (value) => {
-      resolvedValue = value;
+      queue.push(value);
       return builder;
     },
-    then: (resolve) => resolve(resolvedValue),
+    then: (resolve) => resolve(queue.length > 0 ? queue.shift()! : { data: null, error: null }),
   };
   return builder;
 }
@@ -50,6 +65,13 @@ vi.mock("@/lib/supabase/server", () => ({
     rpc,
   }),
 }));
+
+vi.mock("@/lib/bookmarks/fetch-bookmark-metadata", () => ({ fetchBookmarkMetadata }));
+
+vi.mock("next/server", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("next/server")>();
+  return { ...actual, after };
+});
 
 import { GET, POST } from "./route";
 
@@ -246,14 +268,37 @@ describe("GET /api/items", () => {
   });
 });
 
-describe("POST /api/items", () => {
+describe("POST /api/items — type dispatch", () => {
+  beforeEach(() => {
+    getUser.mockReset();
+    builders = {};
+  });
+
+  it("returns 400 when type is missing, without touching the database", async () => {
+    const response = await POST(postRequestWith({ collection_id: VALID_COLLECTION_ID }));
+
+    expect(response.status).toBe(400);
+    expect(getUser).not.toHaveBeenCalled();
+  });
+
+  it("returns 400 for an unsupported type value", async () => {
+    const response = await POST(
+      postRequestWith({ type: "pdf", collection_id: VALID_COLLECTION_ID }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(getUser).not.toHaveBeenCalled();
+  });
+});
+
+describe("POST /api/items — notes", () => {
   beforeEach(() => {
     getUser.mockReset();
     builders = {};
   });
 
   it("returns 400 when collection_id is missing, without touching the database", async () => {
-    const response = await POST(postRequestWith({ title: "Trip" }));
+    const response = await POST(postRequestWith({ type: "note", title: "Trip" }));
 
     expect(response.status).toBe(400);
     expect(getUser).not.toHaveBeenCalled();
@@ -262,7 +307,9 @@ describe("POST /api/items", () => {
   it("returns 401 when there is no session", async () => {
     getUser.mockResolvedValue({ data: { user: null } });
 
-    const response = await POST(postRequestWith({ collection_id: VALID_COLLECTION_ID }));
+    const response = await POST(
+      postRequestWith({ type: "note", collection_id: VALID_COLLECTION_ID }),
+    );
 
     expect(response.status).toBe(401);
   });
@@ -271,7 +318,9 @@ describe("POST /api/items", () => {
     getUser.mockResolvedValue({ data: { user: { id: "user-1" } } });
     getBuilder("collections").resolveWith({ data: null, error: { code: "PGRST116" } });
 
-    const response = await POST(postRequestWith({ collection_id: VALID_COLLECTION_ID }));
+    const response = await POST(
+      postRequestWith({ type: "note", collection_id: VALID_COLLECTION_ID }),
+    );
 
     expect(response.status).toBe(404);
     expect(getBuilder("knowledge_items").insert).not.toHaveBeenCalled();
@@ -285,24 +334,10 @@ describe("POST /api/items", () => {
       error: null,
     });
 
-    await POST(postRequestWith({ collection_id: VALID_COLLECTION_ID }));
+    await POST(postRequestWith({ type: "note", collection_id: VALID_COLLECTION_ID }));
 
     expect(getBuilder("knowledge_items").insert).toHaveBeenCalledWith(
       expect.objectContaining({ title: "Untitled Note" }),
-    );
-  });
-
-  it("always inserts type: 'note' regardless of the payload", async () => {
-    getUser.mockResolvedValue({ data: { user: { id: "user-1" } } });
-    allowCollectionOwnership();
-    getBuilder("knowledge_items").resolveWith({ data: { id: "item-1" }, error: null });
-
-    await POST(
-      postRequestWith({ collection_id: VALID_COLLECTION_ID, type: "website" } as unknown as object),
-    );
-
-    expect(getBuilder("knowledge_items").insert).toHaveBeenCalledWith(
-      expect.objectContaining({ type: "note" }),
     );
   });
 
@@ -316,6 +351,7 @@ describe("POST /api/items", () => {
 
     const response = await POST(
       postRequestWith({
+        type: "note",
         collection_id: VALID_COLLECTION_ID,
         title: "Trip planning",
         description: "Packing list",
@@ -336,9 +372,187 @@ describe("POST /api/items", () => {
     allowCollectionOwnership();
     getBuilder("knowledge_items").resolveWith({ data: null, error: { message: "boom" } });
 
-    const response = await POST(postRequestWith({ collection_id: VALID_COLLECTION_ID }));
+    const response = await POST(
+      postRequestWith({ type: "note", collection_id: VALID_COLLECTION_ID }),
+    );
 
     expect(response.status).toBe(500);
+    expect(consoleError).toHaveBeenCalled();
+    consoleError.mockRestore();
+  });
+});
+
+describe("POST /api/items — website bookmarks", () => {
+  const URL_UNDER_TEST = "https://example.com/article";
+
+  function bookmarkBody(overrides: Partial<Record<string, unknown>> = {}) {
+    return {
+      type: "website",
+      collection_id: VALID_COLLECTION_ID,
+      url: URL_UNDER_TEST,
+      ...overrides,
+    };
+  }
+
+  // The duplicate check every bookmark POST performs before inserting.
+  function allowNoDuplicates() {
+    getBuilder("website_metadata").resolveWith({ data: [], error: null });
+  }
+
+  beforeEach(() => {
+    getUser.mockReset();
+    builders = {};
+    fetchBookmarkMetadata.mockReset();
+    after.mockClear();
+  });
+
+  it("returns 400 for an invalid URL format, without touching the database", async () => {
+    const response = await POST(postRequestWith(bookmarkBody({ url: "not a url" })));
+
+    expect(response.status).toBe(400);
+    expect(getUser).not.toHaveBeenCalled();
+  });
+
+  it("returns 400 for a non-http(s) URL scheme", async () => {
+    const response = await POST(
+      postRequestWith(bookmarkBody({ url: "javascript:alert(1)" })),
+    );
+
+    expect(response.status).toBe(400);
+  });
+
+  it("creates the bookmark immediately with fetch_status pending and the raw URL as title, enqueuing the metadata job via after() rather than awaiting it inline", async () => {
+    getUser.mockResolvedValue({ data: { user: { id: "user-1" } } });
+    allowCollectionOwnership();
+    allowNoDuplicates();
+    getBuilder("knowledge_items").resolveWith({
+      data: { id: "item-1", type: "website", title: URL_UNDER_TEST },
+      error: null,
+    });
+    getBuilder("website_metadata").resolveWith({ data: null, error: null }); // the metadata insert
+
+    const response = await POST(postRequestWith(bookmarkBody()));
+    const body = await response.json();
+
+    expect(response.status).toBe(201);
+    expect(body).toEqual({ id: "item-1", type: "website", title: URL_UNDER_TEST });
+    expect(getBuilder("knowledge_items").insert).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "website", title: URL_UNDER_TEST }),
+    );
+    expect(getBuilder("website_metadata").insert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        knowledge_item_id: "item-1",
+        url: URL_UNDER_TEST,
+        fetch_status: "pending",
+      }),
+    );
+    expect(after).toHaveBeenCalledWith(expect.any(Function));
+    expect(fetchBookmarkMetadata).toHaveBeenCalledWith(
+      expect.anything(),
+      "item-1",
+      URL_UNDER_TEST,
+    );
+  });
+
+  it("returns the non-blocking duplicate signal instead of creating, when the URL matches an existing non-trashed bookmark", async () => {
+    getUser.mockResolvedValue({ data: { user: { id: "user-1" } } });
+    allowCollectionOwnership();
+    getBuilder("website_metadata").resolveWith({
+      data: [
+        {
+          knowledge_item_id: "existing-1",
+          url: URL_UNDER_TEST,
+          canonical_url: null,
+          knowledge_items: { deleted_at: null },
+        },
+      ],
+      error: null,
+    });
+
+    // Tracking-param variant of the same already-saved URL.
+    const response = await POST(
+      postRequestWith(bookmarkBody({ url: `${URL_UNDER_TEST}?utm_source=newsletter` })),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body).toEqual({ duplicate: true, existingItemId: "existing-1" });
+    expect(getBuilder("knowledge_items").insert).not.toHaveBeenCalled();
+  });
+
+  it("creates the bookmark anyway when confirmDuplicate is true, despite a match", async () => {
+    getUser.mockResolvedValue({ data: { user: { id: "user-1" } } });
+    allowCollectionOwnership();
+    getBuilder("knowledge_items").resolveWith({
+      data: { id: "item-2", type: "website", title: URL_UNDER_TEST },
+      error: null,
+    });
+    getBuilder("website_metadata").resolveWith({ data: null, error: null });
+
+    const response = await POST(postRequestWith(bookmarkBody({ confirmDuplicate: true })));
+
+    expect(response.status).toBe(201);
+    expect(getBuilder("knowledge_items").insert).toHaveBeenCalled();
+    // The duplicate-check SELECT itself is skipped entirely when confirming — nothing else was
+    // queued against website_metadata besides the metadata insert this call consumes.
+    expect(getBuilder("website_metadata").select).not.toHaveBeenCalled();
+  });
+
+  it("does not flag a match against a trashed bookmark", async () => {
+    getUser.mockResolvedValue({ data: { user: { id: "user-1" } } });
+    allowCollectionOwnership();
+    getBuilder("website_metadata").resolveWith({
+      data: [
+        {
+          knowledge_item_id: "trashed-1",
+          url: URL_UNDER_TEST,
+          canonical_url: null,
+          knowledge_items: { deleted_at: "2026-01-01T00:00:00.000Z" },
+        },
+      ],
+      error: null,
+    });
+    getBuilder("knowledge_items").resolveWith({
+      data: { id: "item-3", type: "website", title: URL_UNDER_TEST },
+      error: null,
+    });
+    getBuilder("website_metadata").resolveWith({ data: null, error: null }); // the metadata insert
+
+    const response = await POST(postRequestWith(bookmarkBody()));
+
+    expect(response.status).toBe(201);
+    expect(getBuilder("knowledge_items").insert).toHaveBeenCalled();
+  });
+
+  it("returns 500 and logs when the item insert fails", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    getUser.mockResolvedValue({ data: { user: { id: "user-1" } } });
+    allowCollectionOwnership();
+    allowNoDuplicates();
+    getBuilder("knowledge_items").resolveWith({ data: null, error: { message: "boom" } });
+
+    const response = await POST(postRequestWith(bookmarkBody()));
+
+    expect(response.status).toBe(500);
+    expect(consoleError).toHaveBeenCalled();
+    consoleError.mockRestore();
+  });
+
+  it("still returns 201 when the website_metadata insert fails, but does not enqueue the background job", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    getUser.mockResolvedValue({ data: { user: { id: "user-1" } } });
+    allowCollectionOwnership();
+    allowNoDuplicates();
+    getBuilder("knowledge_items").resolveWith({
+      data: { id: "item-4", type: "website", title: URL_UNDER_TEST },
+      error: null,
+    });
+    getBuilder("website_metadata").resolveWith({ data: null, error: { message: "boom" } });
+
+    const response = await POST(postRequestWith(bookmarkBody()));
+
+    expect(response.status).toBe(201);
+    expect(after).not.toHaveBeenCalled();
     expect(consoleError).toHaveBeenCalled();
     consoleError.mockRestore();
   });

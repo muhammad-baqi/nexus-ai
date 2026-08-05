@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import { SaveBookmarkForm } from "@/components/bookmarks/save-bookmark-form";
 
 type Collection = {
   id: string;
@@ -69,7 +70,7 @@ export function CollectionDetailView({ collectionId }: Props) {
     const response = await fetch("/api/items", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ collection_id: collectionId }),
+      body: JSON.stringify({ type: "note", collection_id: collectionId }),
     });
 
     setIsCreating(false);
@@ -111,9 +112,12 @@ export function CollectionDetailView({ collectionId }: Props) {
             <p className="text-muted-foreground text-sm">{collection.description}</p>
           )}
         </div>
-        <Button type="button" onClick={handleNewNote} disabled={isCreating}>
-          {isCreating ? "Creating..." : "New Note"}
-        </Button>
+        <div className="flex items-start gap-2">
+          <Button type="button" onClick={handleNewNote} disabled={isCreating}>
+            {isCreating ? "Creating..." : "New Note"}
+          </Button>
+          <SaveBookmarkForm collectionId={collectionId} />
+        </div>
       </div>
 
       {createError && (
@@ -138,8 +142,8 @@ export function CollectionDetailView({ collectionId }: Props) {
       {visibleItems.length === 0 ? (
         <p className="text-muted-foreground text-sm">
           {items.length === 0
-            ? "No notes yet — create one above."
-            : "No notes to show — all notes in this collection are archived."}
+            ? "No items yet — create a note or save a bookmark above."
+            : "No items to show — everything in this collection is archived."}
         </p>
       ) : (
         <ul className="flex flex-col gap-2">

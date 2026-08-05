@@ -24,13 +24,40 @@ export const itemIdSchema = z.string().uuid();
 
 export const versionIdSchema = z.string().uuid();
 
+// What POST /api/items can create today — note (Day 3) and website (Day 5). The remaining
+// KNOWLEDGE_ITEM_TYPES values (pdf/image/file/code_snippet) exist in the DB enum and the
+// search/filter surface (built ahead of their own Day 5/6 features) but have no create path yet.
+export const CREATABLE_ITEM_TYPES = ["note", "website"] as const;
+
 export const createNoteSchema = z.object({
+  type: z.literal("note"),
   collection_id: z.string().uuid(),
   title: z.string().trim().max(200, "Title is too long").optional(),
   description: z.string().max(50_000, "Note is too long").optional(),
 });
 
 export type CreateNoteInput = z.infer<typeof createNoteSchema>;
+
+export const createBookmarkSchema = z.object({
+  type: z.literal("website"),
+  collection_id: z.string().uuid(),
+  url: z
+    .string()
+    .trim()
+    .url("Enter a valid URL")
+    .refine((value) => {
+      try {
+        return ["http:", "https:"].includes(new URL(value).protocol);
+      } catch {
+        return false;
+      }
+    }, "Only http and https URLs are supported"),
+  // Set on a resubmit after the user dismissed the non-blocking duplicate prompt and chose to
+  // save anyway (Website_Bookmarks.md's Duplicate Detection section).
+  confirmDuplicate: z.boolean().optional(),
+});
+
+export type CreateBookmarkInput = z.infer<typeof createBookmarkSchema>;
 
 export const updateItemSchema = z
   .object({

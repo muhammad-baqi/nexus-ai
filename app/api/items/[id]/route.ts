@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 
 import { fetchItemTags } from "@/lib/items/tags";
 import { verifyCollectionOwnership } from "@/lib/items/verify-collection-ownership";
+import { fetchWebsiteMetadata } from "@/lib/items/website-metadata";
 import { requireUser } from "@/lib/supabase/require-user";
 import { createClient } from "@/lib/supabase/server";
 import { itemIdSchema, updateItemSchema } from "@/lib/validation/items";
@@ -68,7 +69,12 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
     console.error("[api/items/:id] recording view failed:", viewError);
   }
 
-  return NextResponse.json({ ...data, tags });
+  // Only website items have a website_metadata row — an extra query per non-website item would
+  // be wasted work for the common (note) case.
+  const website_metadata =
+    data.type === "website" ? await fetchWebsiteMetadata(supabase, id) : undefined;
+
+  return NextResponse.json({ ...data, tags, ...(website_metadata !== undefined && { website_metadata }) });
 }
 
 // Inserts a new note_versions row, or updates the caller-specified *currently open* one in
