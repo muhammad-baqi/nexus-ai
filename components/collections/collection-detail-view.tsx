@@ -100,6 +100,28 @@ export function CollectionDetailView({ collectionId }: Props) {
     router.push(`/items/${created.id}`);
   }
 
+  async function handleNewSnippet() {
+    setCreateError(undefined);
+    setIsCreating(true);
+
+    const response = await fetch("/api/items", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "code_snippet", collection_id: collectionId }),
+    });
+
+    setIsCreating(false);
+
+    if (!response.ok) {
+      const body = await response.json().catch(() => null);
+      setCreateError(body?.error?.message ?? "Something went wrong creating the snippet.");
+      return;
+    }
+
+    const created = await response.json();
+    router.push(`/items/${created.id}`);
+  }
+
   if (status === "loading") {
     return <p className="text-muted-foreground text-sm">Loading...</p>;
   }
@@ -130,6 +152,9 @@ export function CollectionDetailView({ collectionId }: Props) {
         <div className="flex items-start gap-2">
           <Button type="button" onClick={handleNewNote} disabled={isCreating}>
             {isCreating ? "Creating..." : "New Note"}
+          </Button>
+          <Button type="button" variant="outline" onClick={handleNewSnippet} disabled={isCreating}>
+            {isCreating ? "Creating..." : "New Snippet"}
           </Button>
           <SaveBookmarkForm collectionId={collectionId} />
           <UploadFileForm collectionId={collectionId} onUploaded={load} />

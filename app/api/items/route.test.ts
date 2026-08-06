@@ -295,7 +295,7 @@ describe("POST /api/items — type dispatch", () => {
 
   it("returns 400 for an unsupported type value", async () => {
     const response = await POST(
-      postRequestWith({ type: "code_snippet", collection_id: VALID_COLLECTION_ID }),
+      postRequestWith({ type: "bogus", collection_id: VALID_COLLECTION_ID }),
     );
 
     expect(response.status).toBe(400);
@@ -791,6 +791,95 @@ describe("POST /api/items — file uploads (pdf/image/file)", () => {
 
     expect(response.status).toBe(500);
     expect(deleteUploadedObject).toHaveBeenCalledWith(expect.anything(), STORAGE_PATH);
+    consoleError.mockRestore();
+  });
+});
+
+describe("POST /api/items — code snippets", () => {
+  beforeEach(() => {
+    getUser.mockReset();
+    builders = {};
+  });
+
+  function snippetBody(overrides: Partial<Record<string, unknown>> = {}) {
+    return { type: "code_snippet", collection_id: VALID_COLLECTION_ID, ...overrides };
+  }
+
+  it("returns 404 when the collection doesn't belong to the caller", async () => {
+    getUser.mockResolvedValue({ data: { user: { id: "user-1" } } });
+    getBuilder("collections").resolveWith({ data: null, error: { code: "PGRST116" } });
+
+    const response = await POST(postRequestWith(snippetBody()));
+
+    expect(response.status).toBe(404);
+    expect(getBuilder("knowledge_items").insert).not.toHaveBeenCalled();
+  });
+
+  it("defaults title/language/code_content when omitted", async () => {
+    getUser.mockResolvedValue({ data: { user: { id: "user-1" } } });
+    allowCollectionOwnership();
+    getBuilder("knowledge_items").resolveWith({
+      data: { id: "item-1", type: "code_snippet", title: "Untitled Snippet" },
+      error: null,
+    });
+    getBuilder("code_snippet_data").resolveWith({ data: null, error: null });
+
+    await POST(postRequestWith(snippetBody()));
+
+    expect(getBuilder("knowledge_items").insert).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "code_snippet", title: "Untitled Snippet" }),
+    );
+    expect(getBuilder("code_snippet_data").insert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        knowledge_item_id: "item-1",
+        language: "plaintext",
+        code_content: "",
+      }),
+    );
+  });
+
+  it("creates a code_snippet item + code_snippet_data row with the given fields", async () => {
+    getUser.mockResolvedValue({ data: { user: { id: "user-1" } } });
+    allowCollectionOwnership();
+    getBuilder("knowledge_items").resolveWith({
+      data: { id: "item-1", type: "code_snippet", title: "Binary search" },
+      error: null,
+    });
+    getBuilder("code_snippet_data").resolveWith({ data: null, error: null });
+
+    const response = await POST(
+      postRequestWith(
+        snippetBody({ title: "Binary search", language: "python", code_content: "def search(): pass" }),
+      ),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(201);
+    expect(body).toEqual({ id: "item-1", type: "code_snippet", title: "Binary search" });
+    expect(getBuilder("code_snippet_data").insert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        knowledge_item_id: "item-1",
+        language: "python",
+        code_content: "def search(): pass",
+      }),
+    );
+  });
+
+  it("rolls back the item when the code_snippet_data insert fails", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    getUser.mockResolvedValue({ data: { user: { id: "user-1" } } });
+    allowCollectionOwnership();
+    getBuilder("knowledge_items").resolveWith({
+      data: { id: "item-1", type: "code_snippet", title: "Untitled Snippet" },
+      error: null,
+    });
+    getBuilder("code_snippet_data").resolveWith({ data: null, error: { message: "boom" } });
+    getBuilder("knowledge_items").resolveWith({ data: null, error: null }); // the rollback delete
+
+    const response = await POST(postRequestWith(snippetBody()));
+
+    expect(response.status).toBe(500);
+    expect(getBuilder("knowledge_items").delete).toHaveBeenCalled();
     consoleError.mockRestore();
   });
 });

@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 
 import { BookmarkView } from "@/components/bookmarks/bookmark-view";
+import { CodeSnippetView } from "@/components/code-snippets/code-snippet-view";
 import { FileItemView } from "@/components/files/file-item-view";
 import { NoteEditor } from "@/components/notes/note-editor";
 import { createClient } from "@/lib/supabase/server";
@@ -32,6 +33,8 @@ export default async function ItemPage({ params }: Props) {
         <BookmarkView key={id} itemId={id} />
       ) : data?.type && FILE_ITEM_TYPES.has(data.type) ? (
         <FileItemView key={id} itemId={id} />
+      ) : data?.type === "code_snippet" ? (
+        <CodeSnippetView key={id} itemId={id} />
       ) : (
         // key={id}: forces a full remount on navigation between items, so a still-ticking
         // autosave debounce/retry timer for the previous note can never fire against — and

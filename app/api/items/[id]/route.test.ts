@@ -262,6 +262,38 @@ describe("GET /api/items/:id", () => {
     expect(fromCalls.file_assets).toBeUndefined();
     expect(body).not.toHaveProperty("file_asset");
   });
+
+  it("embeds code_snippet_data for a code_snippet-type item", async () => {
+    getUser.mockResolvedValue({ data: { user: { id: "user-1" } } });
+    queueResponse("knowledge_items", {
+      data: { id: VALID_ID, type: "code_snippet", title: "Binary search" },
+      error: null,
+    });
+    queueResponse("code_snippet_data", {
+      data: { language: "python", code_content: "def search(): pass" },
+      error: null,
+    });
+
+    const response = await GET(requestFor("GET"), { params });
+
+    expect(await response.json()).toMatchObject({
+      code_snippet_data: { language: "python", code_content: "def search(): pass" },
+    });
+  });
+
+  it("does not query code_snippet_data for a note-type item", async () => {
+    getUser.mockResolvedValue({ data: { user: { id: "user-1" } } });
+    queueResponse("knowledge_items", {
+      data: { id: VALID_ID, type: "note", title: "Trip planning" },
+      error: null,
+    });
+
+    const response = await GET(requestFor("GET"), { params });
+    const body = await response.json();
+
+    expect(fromCalls.code_snippet_data).toBeUndefined();
+    expect(body).not.toHaveProperty("code_snippet_data");
+  });
 });
 
 describe("PATCH /api/items/:id", () => {
@@ -528,6 +560,66 @@ describe("PATCH /api/items/:id", () => {
       expect(await response.json()).toMatchObject({ versionId: null });
       expect(consoleError).toHaveBeenCalled();
       consoleError.mockRestore();
+    });
+  });
+
+  describe("code_snippet_data updates (language/code_content)", () => {
+    it("updates language/code_content on code_snippet_data for a language/code_content-only body, without an empty knowledge_items update", async () => {
+      // Prior-state lookup (fires because language/code_content are present, same trigger as
+      // "description") then the plain re-select in place of an UPDATE, since itemFields ends up
+      // empty — an empty PostgREST PATCH body isn't safe to send.
+      queueResponse("knowledge_items", { data: { description: null, type: "code_snippet" }, error: null });
+      queueResponse("knowledge_items", { data: { id: VALID_ID, title: "Binary search" }, error: null });
+      queueResponse("code_snippet_data", {
+        data: { language: "python", code_content: "def search(): pass" },
+        error: null,
+      });
+
+      const response = await PATCH(
+        requestFor("PATCH", { language: "python", code_content: "def search(): pass" }),
+        { params },
+      );
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({
+        id: VALID_ID,
+        code_snippet_data: { language: "python", code_content: "def search(): pass" },
+      });
+      expect(fromCalls.knowledge_items).toBe(2);
+    });
+
+    it("returns 500 (not 200 with the edit silently dropped) when the code_snippet_data update itself fails", async () => {
+      // Self-review catch: code_snippet_data IS the item's current content, unlike note_versions'
+      // history bookkeeping — a failed write here must fail loudly, not return 200 with the
+      // user's edited code gone and no error shown.
+      const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+      queueResponse("knowledge_items", { data: { description: null, type: "code_snippet" }, error: null });
+      queueResponse("knowledge_items", { data: { id: VALID_ID, title: "Binary search" }, error: null });
+      queueResponse("code_snippet_data", { data: null, error: { message: "boom" } });
+
+      const response = await PATCH(
+        requestFor("PATCH", { language: "python", code_content: "def search(): pass" }),
+        { params },
+      );
+
+      expect(response.status).toBe(500);
+      expect(consoleError).toHaveBeenCalled();
+      consoleError.mockRestore();
+    });
+
+    it("is a no-op on code_snippet_data for a non-code_snippet item (doesn't error, doesn't write)", async () => {
+      queueResponse("knowledge_items", { data: { description: null, type: "note" }, error: null });
+      queueResponse("knowledge_items", { data: { id: VALID_ID, title: "Trip planning" }, error: null });
+
+      const response = await PATCH(
+        requestFor("PATCH", { language: "python", code_content: "def search(): pass" }),
+        { params },
+      );
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(fromCalls.code_snippet_data).toBeUndefined();
+      expect(body).not.toHaveProperty("code_snippet_data");
     });
   });
 });

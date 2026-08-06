@@ -588,3 +588,39 @@ RPC instead of a plain `.from()` query):
 - [ ] Paste an unreachable URL → item still saves → "metadata unavailable" shown → Retry
 - [ ] Paste a URL duplicating an already-saved bookmark → duplicate prompt → "View existing"
       navigates to it
+
+## Code Snippets (Day 5)
+
+`lib/code-snippets/languages.test.ts` (new — pure):
+- [x] resolves the correct extension for a supported language name
+- [x] falls back to no-highlight/plain for an unrecognized language string
+- [x] the curated list includes the documented common languages (spot-check a handful) plus `plaintext`
+
+`app/api/items/route.test.ts` (extended):
+- [x] POST creates a `code_snippet` item + `code_snippet_data` row with the given title/language/code_content
+- [x] POST defaults title/language/code_content when omitted (blank-create path)
+- [x] POST rolls back the `knowledge_items` row if the `code_snippet_data` insert fails
+- [x] POST 404s when `collection_id` doesn't belong to the caller
+- [x] `code_snippet` is accepted as a valid `type` (the existing invalid-type 400 test still rejects genuinely bogus types)
+
+`app/api/items/[id]/route.test.ts` (extended):
+- [x] GET embeds `code_snippet_data` for a `code_snippet` item (and a note never queries that table)
+- [x] PATCH updates `language`/`code_content` on `code_snippet_data` without touching `knowledge_items` title unless also provided
+- [x] PATCH with only `language`/`code_content` (no `knowledge_items` field) succeeds without sending an empty update to `knowledge_items`
+- [x] PATCH sending `language`/`code_content` for a non-`code_snippet` item is a no-op on `code_snippet_data` (doesn't error, doesn't write)
+
+`components/collections/collection-detail-view.test.tsx` (extended):
+- [x] clicking "New Snippet" POSTs `type: code_snippet` and navigates to the created item
+
+`components/code-snippets/code-snippet-view.test.tsx` (new):
+- [x] renders pre-filled with the snippet's stored language/code_content
+- [x] Edit/Save toggle: typing doesn't autosave (no PATCH until Save)
+- [x] Copy button copies the exact raw `code_content` (mocked `navigator.clipboard.writeText`)
+- [x] an unrecognized stored language value renders as plain text without crashing
+
+`e2e/code-snippets.spec.ts` (new, `@smoke`, written this feature, run in the end-of-session
+consolidated live-browser pass):
+- [ ] Create a snippet with a distinctive function/variable name in its code → Global Search for
+      that string → found
+- [ ] Copy-to-clipboard reproduces the exact stored content
+- [ ] Edit language and code → reload → both persist

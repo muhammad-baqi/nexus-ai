@@ -81,6 +81,29 @@ describe("CollectionDetailView", () => {
     expect(push).toHaveBeenCalledWith("/items/item-2");
   });
 
+  it("'New Snippet' POSTs type: code_snippet with the current collection_id and navigates to the created item", async () => {
+    (fetch as ReturnType<typeof vi.fn>).mockImplementation((url: string, init?: RequestInit) => {
+      if (init?.method === "POST") return Promise.resolve(jsonResponse({ id: "item-3" }, true));
+      if (url.startsWith("/api/collections/")) return Promise.resolve(jsonResponse(baseCollection));
+      return Promise.resolve(jsonResponse({ items: [] }));
+    });
+
+    render(<CollectionDetailView collectionId="col-1" />);
+    await screen.findByText(/no items yet/i);
+
+    fireEvent.click(screen.getByRole("button", { name: /new snippet/i }));
+
+    expect(await screen.findByRole("button", { name: /new snippet/i })).not.toBeDisabled();
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/items",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ type: "code_snippet", collection_id: "col-1" }),
+      }),
+    );
+    expect(push).toHaveBeenCalledWith("/items/item-3");
+  });
+
   it("shows a retry-able error state on a failed load", async () => {
     (fetch as ReturnType<typeof vi.fn>).mockResolvedValue({ ok: false });
 

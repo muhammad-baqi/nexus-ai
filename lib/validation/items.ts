@@ -3,6 +3,8 @@ import { z } from "zod";
 import { GENERAL_FILE_MIME_TYPES, IMAGE_MIME_TYPES, PDF_MIME_TYPE } from "@/lib/files/constants";
 
 export const DEFAULT_NOTE_TITLE = "Untitled Note";
+export const DEFAULT_SNIPPET_TITLE = "Untitled Snippet";
+export const DEFAULT_SNIPPET_LANGUAGE = "plaintext";
 
 // Matches the DB enum knowledge_item_type (001_initial_schema.sql) — only 'note' is buildable
 // today, but the filter/search surface is built generically per Search.md's "results spanning
@@ -26,10 +28,9 @@ export const itemIdSchema = z.string().uuid();
 
 export const versionIdSchema = z.string().uuid();
 
-// What POST /api/items can create today — note/website (earlier Day 5) plus pdf/image/file
-// (this feature). code_snippet exists in the DB enum and the search/filter surface (built ahead
-// of its own later Day 5 feature) but has no create path yet.
-export const CREATABLE_ITEM_TYPES = ["note", "website", "pdf", "image", "file"] as const;
+// What POST /api/items can create today — note/website/pdf/image/file (earlier Day 5) plus
+// code_snippet (this feature).
+export const CREATABLE_ITEM_TYPES = ["note", "website", "pdf", "image", "file", "code_snippet"] as const;
 
 export const createNoteSchema = z.object({
   type: z.literal("note"),
@@ -80,6 +81,20 @@ export const createFileItemSchema = z.object({
 
 export type CreateFileItemInput = z.infer<typeof createFileItemSchema>;
 
+// title/language/code_content are all optional here, same as createNoteSchema's title — the
+// "New Snippet" button creates a blank item immediately (defaults applied in the route) and
+// navigates straight to it for editing, rather than a pre-submission form, mirroring Notes'
+// existing create flow.
+export const createCodeSnippetSchema = z.object({
+  type: z.literal("code_snippet"),
+  collection_id: z.string().uuid(),
+  title: z.string().trim().max(200, "Title is too long").optional(),
+  language: z.string().trim().min(1).max(50, "Unrecognized language").optional(),
+  code_content: z.string().max(500_000, "Snippet is too long").optional(),
+});
+
+export type CreateCodeSnippetInput = z.infer<typeof createCodeSnippetSchema>;
+
 export const updateItemSchema = z
   .object({
     title: z.string().trim().min(1, "Title is required").max(200, "Title is too long").optional(),
@@ -92,10 +107,18 @@ export const updateItemSchema = z
     // boundary (insert) instead — see Notes.md's Version History section. Not a knowledge_items
     // column; stripped before the update.
     openVersionId: z.string().uuid().nullable().optional(),
+    // code_snippet-only: not knowledge_items columns either, stripped before that update and
+    // written to code_snippet_data instead — see app/api/items/[id]/route.ts's PATCH handler.
+    // Type-gated there (only written when the target item actually is a code_snippet), not
+    // type-validated here — sending these against another item type is a silent no-op, not a 400
+    // (same "harmless if sent, only acted on when relevant" treatment openVersionId gets).
+    language: z.string().trim().min(1).max(50, "Unrecognized language").optional(),
+    code_content: z.string().max(500_000, "Snippet is too long").optional(),
   })
-  .refine((data) => Object.keys(data).some((key) => key !== "openVersionId"), {
-    message: "At least one field must be provided.",
-  });
+  .refine(
+    (data) => Object.keys(data).some((key) => key !== "openVersionId"),
+    { message: "At least one field must be provided." },
+  );
 
 export type UpdateItemInput = z.infer<typeof updateItemSchema>;
 

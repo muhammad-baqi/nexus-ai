@@ -11,10 +11,13 @@ import { requireUser } from "@/lib/supabase/require-user";
 import { createClient } from "@/lib/supabase/server";
 import {
   createBookmarkSchema,
+  createCodeSnippetSchema,
   createFileItemSchema,
   createNoteSchema,
   DEFAULT_ITEMS_PAGE_LIMIT,
   DEFAULT_NOTE_TITLE,
+  DEFAULT_SNIPPET_LANGUAGE,
+  DEFAULT_SNIPPET_TITLE,
   listItemsQuerySchema,
 } from "@/lib/validation/items";
 
@@ -120,8 +123,8 @@ export async function GET(request: NextRequest) {
   return NextResponse.json({ items, total, page, limit });
 }
 
-// Dispatches on the required `type` discriminator — the two creatable types (note, website) have
-// different payload shapes and create paths, per CREATABLE_ITEM_TYPES in lib/validation/items.ts.
+// Dispatches on the required `type` discriminator — each creatable type has a different payload
+// shape and create path, per CREATABLE_ITEM_TYPES in lib/validation/items.ts.
 export async function POST(request: NextRequest) {
   const body: unknown = await request.json().catch(() => null);
   const type =
@@ -130,12 +133,13 @@ export async function POST(request: NextRequest) {
   if (type === "website") return createBookmark(body);
   if (type === "note") return createNote(body);
   if (type === "pdf" || type === "image" || type === "file") return createFileItem(body);
+  if (type === "code_snippet") return createCodeSnippet(body);
 
   return NextResponse.json(
     {
       error: {
         code: "invalid_request",
-        message: "type must be one of 'note', 'website', 'pdf', 'image', 'file'.",
+        message: "type must be one of 'note', 'website', 'pdf', 'image', 'file', 'code_snippet'.",
       },
     },
     { status: 400 },
@@ -438,6 +442,77 @@ async function createFileItem(body: unknown) {
     // Runs after this response has been sent (CLAUDE.md rule #5). Closes over the same
     // already-authenticated `supabase` client, same pattern as the bookmark metadata job.
     after(() => extractPdfText(supabase, item.id, storage_path));
+  }
+
+  return NextResponse.json(item, { status: 201 });
+}
+
+// title/language/code_content are all optional on the request (createCodeSnippetSchema) — the
+// "New Snippet" button creates a blank item immediately and navigates straight to it for editing,
+// same flow as createNote's DEFAULT_NOTE_TITLE fallback. Defaults applied here, not in the schema.
+async function createCodeSnippet(body: unknown) {
+  const result = createCodeSnippetSchema.safeParse(body);
+
+  if (!result.success) {
+    return NextResponse.json(
+      {
+        error: {
+          code: "invalid_request",
+          message: result.error.issues[0]?.message ?? "Invalid code snippet.",
+        },
+      },
+      { status: 400 },
+    );
+  }
+
+  const supabase = await createClient();
+  const { user, response } = await requireUser(supabase);
+  if (!user) return response;
+
+  const ownsCollection = await verifyCollectionOwnership(supabase, result.data.collection_id, user.id);
+  if (!ownsCollection) {
+    return NextResponse.json(
+      { error: { code: "not_found", message: "This collection doesn't exist." } },
+      { status: 404 },
+    );
+  }
+
+  const { data: item, error: itemError } = await supabase
+    .from("knowledge_items")
+    .insert({
+      owner_id: user.id,
+      collection_id: result.data.collection_id,
+      type: "code_snippet",
+      title: result.data.title || DEFAULT_SNIPPET_TITLE,
+    })
+    .select()
+    .single();
+
+  if (itemError) {
+    console.error("[api/items] code snippet create failed:", itemError);
+    return NextResponse.json(
+      { error: { code: "create_failed", message: "Something went wrong creating this snippet." } },
+      { status: 500 },
+    );
+  }
+
+  const { error: snippetError } = await supabase.from("code_snippet_data").insert({
+    knowledge_item_id: item.id,
+    language: result.data.language || DEFAULT_SNIPPET_LANGUAGE,
+    code_content: result.data.code_content ?? "",
+  });
+
+  if (snippetError) {
+    // Same reasoning as createFileItem's file_assets rollback: a code_snippet item with no
+    // code_snippet_data row is useless (no way to ever read the code back) — unlike a bookmark's
+    // website_metadata insert failure (CLAUDE.md rule #7 doesn't apply the same way here, there's
+    // no meaningful degraded state to fall back to).
+    console.error("[api/items] code_snippet_data create failed:", snippetError);
+    await supabase.from("knowledge_items").delete().eq("id", item.id);
+    return NextResponse.json(
+      { error: { code: "create_failed", message: "Something went wrong creating this snippet." } },
+      { status: 500 },
+    );
   }
 
   return NextResponse.json(item, { status: 201 });

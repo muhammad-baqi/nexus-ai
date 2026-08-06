@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 
+import { fetchCodeSnippetData } from "@/lib/items/code-snippet";
 import { fetchFileAsset } from "@/lib/items/file-asset";
 import { fetchItemTags } from "@/lib/items/tags";
 import { verifyCollectionOwnership } from "@/lib/items/verify-collection-ownership";
@@ -79,12 +80,15 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
     data.type === "pdf" || data.type === "image" || data.type === "file"
       ? await fetchFileAsset(supabase, id)
       : undefined;
+  const code_snippet_data =
+    data.type === "code_snippet" ? await fetchCodeSnippetData(supabase, id) : undefined;
 
   return NextResponse.json({
     ...data,
     tags,
     ...(website_metadata !== undefined && { website_metadata }),
     ...(file_asset !== undefined && { file_asset }),
+    ...(code_snippet_data !== undefined && { code_snippet_data }),
   });
 }
 
@@ -151,7 +155,10 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
     );
   }
 
-  const { openVersionId, ...itemFields } = result.data;
+  // language/code_content aren't knowledge_items columns (like openVersionId) — pulled out here
+  // and written to code_snippet_data separately, further down.
+  const { openVersionId, language, code_content, ...itemFields } = result.data;
+  const hasKnowledgeItemFields = Object.keys(itemFields).length > 0;
 
   const supabase = await createClient();
   const { user, response } = await requireUser(supabase);
@@ -174,11 +181,12 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
   }
 
   // Needed to know whether this PATCH's description actually changed (the client always sends
-  // title+description together, whichever one changed) and whether this item is a note at all
-  // — note_versions only applies to notes.
+  // title+description together, whichever one changed), whether this item is a note at all
+  // — note_versions only applies to notes — and (code_snippet-only) what type this item is, to
+  // gate the code_snippet_data write below to snippet items.
   let previousDescription: string | null = null;
   let itemType: string | null = null;
-  if ("description" in itemFields) {
+  if ("description" in itemFields || language !== undefined || code_content !== undefined) {
     const { data: existing, error: existingError } = await supabase
       .from("knowledge_items")
       .select("description, type")
@@ -193,14 +201,25 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
     itemType = existing?.type ?? null;
   }
 
-  const { data, error } = await supabase
-    .from("knowledge_items")
-    .update(itemFields)
-    .eq("id", id)
-    .eq("owner_id", user.id)
-    .is("deleted_at", null)
-    .select()
-    .single();
+  // A code_snippet-only PATCH (just language/code_content, no knowledge_items column changed)
+  // leaves itemFields empty — an empty PostgREST PATCH body isn't safe to send, so re-select the
+  // row instead of updating it in that case.
+  const { data, error } = hasKnowledgeItemFields
+    ? await supabase
+        .from("knowledge_items")
+        .update(itemFields)
+        .eq("id", id)
+        .eq("owner_id", user.id)
+        .is("deleted_at", null)
+        .select()
+        .single()
+    : await supabase
+        .from("knowledge_items")
+        .select("*")
+        .eq("id", id)
+        .eq("owner_id", user.id)
+        .is("deleted_at", null)
+        .single();
 
   if (error) {
     if (error.code === NO_ROWS_CODE) {
@@ -228,7 +247,41 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
   // See the GET handler above: `null` (read failed) is passed through distinctly from `[]`
   // (genuinely no tags) so the client doesn't clobber its tag list on every autosave/toggle.
   const tags = await fetchItemTags(supabase, id);
-  return NextResponse.json({ ...data, tags, versionId });
+
+  let code_snippet_data: { language: string; code_content: string } | undefined;
+  if (itemType === "code_snippet" && (language !== undefined || code_content !== undefined)) {
+    const snippetPatch: Record<string, string> = {};
+    if (language !== undefined) snippetPatch.language = language;
+    if (code_content !== undefined) snippetPatch.code_content = code_content;
+
+    const { data: updatedSnippet, error: snippetError } = await supabase
+      .from("code_snippet_data")
+      .update(snippetPatch)
+      .eq("knowledge_item_id", id)
+      .select("language, code_content")
+      .single();
+
+    if (snippetError) {
+      // Unlike note_versions above (history bookkeeping — the current state is already saved
+      // regardless of whether its history entry recorded), code_snippet_data IS the item's
+      // current content: there's no fallback state to degrade to. A failed write here means the
+      // user's edited code is gone with nothing to show for it, so this must fail loudly
+      // (CLAUDE.md rule 4) rather than return 200 with the edit silently dropped.
+      console.error("[api/items/:id] code_snippet_data update failed:", snippetError);
+      return NextResponse.json(
+        { error: { code: "update_failed", message: "Something went wrong saving this snippet's code." } },
+        { status: 500 },
+      );
+    }
+    code_snippet_data = updatedSnippet;
+  }
+
+  return NextResponse.json({
+    ...data,
+    tags,
+    versionId,
+    ...(code_snippet_data !== undefined && { code_snippet_data }),
+  });
 }
 
 export async function DELETE(_request: NextRequest, { params }: RouteParams) {
