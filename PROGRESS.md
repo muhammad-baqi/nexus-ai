@@ -13,19 +13,57 @@ in its own entry, under a **"Not verified this session (manual retest needed):"*
 integration/component tests, typecheck, and lint are still run and green for every feature —
 only the browser-driven and at-scale checks are deferred.
 
-**🐛 Known bug reported by user, 2026-08-05, not yet investigated/reproduced — Auth flow
-confusion.** User-reported, live on a deployed environment (not this session's local dev): (1) a
-password-reset link came back "This link isn't valid — It may have already been used, or the link
-was copied incorrectly. Register again to get a fresh one." — the exact Supabase/`invalid`-status
-copy `/reset-password`'s flow shows for an expired/consumed `recovery` token
-(`app/verify-email/page.tsx`-equivalent status handling, `app/auth/confirm/route.ts`). (2)
-Separately, the user tried to register a new account and expected a fresh confirmation email tied
-to that new attempt, but ended up needing to use an old email/link instead of a new one — vague as
-reported, no repro steps yet. Needs a real investigation session: reproduce both against the
-actual environment the user hit (staging? production? which email address), check whether this is
-the known Supabase Auth rate-limit/cooldown on resending, an actual token-expiry mismatch, or a
-genuine bug in the confirm/reset flow. Not investigated this session — flagged here per explicit
-user instruction to log it and keep moving on the current feature.
+**🐛 Auth flow confusion bug, reported 2026-08-05 — investigated and partially fixed 2026-08-06**
+(`fix/register-resend-rate-limit`, squash-merged into `develop`). Two reports, investigated
+separately by reproducing live against real local Supabase + Mailpit (`docker compose down` +
+`next_cache` volume removal was needed first — the dev server was serving a stale Turbopack
+client bundle, same known local-only staleness quirk documented elsewhere in this file):
+
+**(2) Registration confirmation confusion — real bug, fixed.** Reproduced: re-submitting the
+register form for an email that had just signed up moments earlier hits Supabase's 60s
+`max_frequency` resend cooldown (`over_email_send_rate_limit`, confirmed live —
+`AuthApiError: "For security purposes, you can only request this after 58 seconds."`).
+`RegisterForm` only special-cased `user_already_exists` (the duplicate-confirmed-email code), so
+a rate-limited resend fell through to a generic "Something went wrong creating your account"
+error — exactly matching the report: user expected a fresh email, got an opaque failure instead,
+and had to fall back to the original attempt's link. Fixed by treating
+`over_email_send_rate_limit` as a second success-adjacent case landing on the check-your-email
+screen. Self-review (code-reviewer subagent) caught a real follow-on issue: GoTrue returns this
+same code for two different things the client can't distinguish — the per-address cooldown (an
+email genuinely was already sent) vs. `[auth.rate_limit] email_sent`, a project-wide hourly quota
+that only bites once custom SMTP is configured. This repo hasn't wired up Resend yet
+(`.claude/docs/infrastructure.md` still lists it as "needed from Day 6"), so staging/prod are
+currently on Supabase's own hosted mailer, which has its own low default quota — meaning the
+project-wide-quota case is plausible on the actual deployed environment the user hit, not just
+local dev. Fixed by softening the UI copy to not assert with false certainty that a new email
+exists when rate-limited, rather than claiming one was sent either way. **Flagged, not fixed
+here:** whether staging/prod's actual Supabase Auth email quota is a real risk needs checking
+directly in the Supabase dashboard (both projects) — if it's as low as local's `email_sent = 2`/hr
+default, wiring up Resend sooner than Day 6 may be the real fix. Self-review also caught the new
+diagnostic logging in `app/auth/confirm/route.ts` (see below) originally logging the raw
+`token_hash` in cleartext — a live, single-use credential equivalent to a bearer token — fixed to
+log presence/shape only, with a regression test pinning that.
+
+**(1) Password-reset link showing verify-email's "Register again" copy — could not reproduce
+against current code.** Live-tested: requesting a reset twice in a row before using either
+returns the *identical* token_hash (Supabase doesn't rotate it), using it once correctly redirects
+to `/reset-password?status=success`, and re-using the same (now-consumed) link correctly shows
+`/reset-password`'s own distinct copy ("This link has expired... Request a new one" — never
+"Register again," which only exists on `/verify-email`). `DESTINATION_BY_TYPE` in
+`app/auth/confirm/route.ts` has always mapped `recovery → /reset-password` (unchanged since the
+Password Reset feature shipped, `bc80e81`) — the only path to landing on `/verify-email` for a
+recovery attempt is this route's own zod-validation-failure fallback, which fires if
+`token_hash`/`type` are missing or malformed in the incoming query string (e.g. an email client
+rewriting/truncating the link, or a corporate link-scanner pre-fetching and consuming the
+single-use token before the real click). Added a `console.error` to that previously-silent
+fallback branch (redacted per the finding above) so a recurrence can actually be diagnosed instead
+of guessed at — not a fix for a symptom that didn't reproduce, just visibility for next time.
+
+19/19 new/updated unit tests green (8 in `register-form.test.tsx` including the new rate-limit
+case, 10 in `route.test.ts` including the token_hash-redaction regression test), 662/662 full
+suite green, typecheck clean, lint clean on touched files. Live-verified via the dockerized
+`playwright` service: `register.spec.ts` (including a new regression test for the resend-cooldown
+case), `verify-email.spec.ts`, and `login.spec.ts` all green against a freshly-built dev server.
 
 **2026-08-05 — session paused cleanly at end of day.** Day 5 is now 9/13 (Website Bookmarks'
 4 lines + File Uploads' 5 lines below, both shipped and squash-merged into `develop` this
