@@ -20,6 +20,99 @@ per-feature — except where self-review surfaces a real bug whose fix specifica
 proof (see Code Snippets below), in which case that one spec is run immediately rather than
 deferred. Unit/integration/component tests, typecheck, and lint remain per-feature, unchanged.
 
+**2026-08-06 — Day 6 Settings — full polish + Data Export/Import shipped**
+(build-order-complete.md #24), squash-merged into `develop`. First Day 6 feature — Day 5
+(Knowledge Sources) is code-complete on `develop` (11/13, the 2 remaining lines are explicitly
+optional bookmark extras, plus the human's staging deploy).
+
+New `supabase/migrations/009_settings_data_jobs.sql`: `profiles.language_preference` (persisted
+the same way `theme_preference` already is — `notification_email_enabled` already existed from
+`001_initial_schema.sql`, just never wired to a control until this feature); new `export_jobs`/
+`import_jobs` tables (two separate tables rather than one polymorphic one — their success-state
+columns genuinely differ, `storage_path` vs `created_count`/`skipped_count`/`skip_reasons`) with
+owner-scoped RLS; a new private `data-jobs` Storage bucket + RLS, same `{owner_id}/...`-scoped
+pattern as every other bucket in this app. Applied to local Supabase and, in the same push,
+**`nexus-staging`** — which turned out to be several migrations behind (004–008 had never actually
+been pushed there, only ever applied locally) and is now caught up.
+
+Export runs as a background job via `after()` (same never-throw contract as
+`fetchBookmarkMetadata`/`extractPdfText`): `lib/settings/export/build-json-export.ts` is the single
+source of truth (owner's active, non-trashed collections + items + tags + type-specific data, one
+batched query per related table rather than N+1), which `build-markdown-export.ts` (one folder per
+Collection, a hand-rolled frontmatter block + real content for Notes / a metadata-only block for
+every other type, `jszip`) and `build-zip-export.ts` (`export.json` + each `file_assets` row's real
+bytes under `files/`) both build on. `POST /api/settings/export` enqueues, `GET
+/api/settings/export/:jobId` polls status + a freshly-signed download link, matching the exact
+endpoint shape `API_Design.md` had already specified. Import (`lib/settings/jobs/run-import-job.ts`)
+accepts a previous JSON or Markdown-ZIP export (uploaded direct-to-Storage by the client, same
+pattern avatars/files already use), always creates *new* collections/items (never merges/dedupes
+against existing data, per Settings.md), and skips-and-continues per malformed item rather than
+failing the whole job — job `status` is only ever `'failed'` when the source file itself couldn't
+be read/parsed at all. File bytes are deliberately never re-imported (Settings.md's Import section
+only covers JSON/Markdown, not the binary-inclusive `zip` export format) — a `pdf`/`image`/`file`
+item comes back as a bare `knowledge_items` row with no `file_assets` behind it, which
+`FileItemView` already degrades from cleanly (`{asset && (...)}`, confirmed by reading the code
+rather than assumed).
+
+**New dependency** (flagging per CLAUDE.md): `jszip` — no existing dependency does ZIP read/write,
+and unlike `lib/files/sniff-content.ts`'s magic-byte checks, a real DEFLATE-compressed ZIP isn't
+reasonably hand-rollable; `npm audit` confirmed no new/elevated vulnerabilities (same 6 pre-existing
+transitive advisories as every prior feature this Day).
+
+Self-review (`code-reviewer` subagent) caught one **critical, security-relevant** bug, fixed: JSON/
+Markdown-ZIP import validated a website item's `url` with a bare `z.string().min(1)`, unlike every
+other path that writes `website_metadata.url` (`createBookmarkSchema`), which requires a real
+http(s) URL and explicitly rejects other schemes. That URL is later rendered as a real, unescaped
+anchor `href` (`components/bookmarks/bookmark-view.tsx`), and this app has no CSP — a crafted/shared
+`export.json` (or a `url:` frontmatter field in a Markdown-ZIP) containing a `javascript:` URI would
+execute in the importing user's authenticated session on click. Fixed by reusing
+`createBookmarkSchema.shape.url` (the exact same schema real bookmark creation already enforces)
+inside the import validator. Verified live, not just via the mocked unit test that pins it: a new
+`e2e/settings.spec.ts` (`@smoke`) was written **and run this session** (not deferred, per this
+session's own "self-review surfaces a bug whose fix specifically needs live proof" exception,
+first invoked for Code Snippets) — a real import bundle containing one valid note plus one
+`javascript:`-URL bookmark item resolved to "1 imported, 1 skipped," with the malicious item never
+created, confirmed against the real dev server + local Supabase via the dockerized `playwright`
+service. That same live run also confirmed language/notification preferences persist across a real
+reload, and that a triggered JSON export's signed download link resolves to real, correct exported
+content (fetched directly and parsed, not just trusted from the UI's success state).
+
+Self-review also caught two further real bugs, both fixed with regression tests: (1) import
+validation was materially looser than every other create/update path for the same fields (no
+`max()` on title/note-content/snippet-code, no `tagNameSchema` reuse on tag names, free-text
+`color`/`icon` instead of the real `COLLECTION_COLORS`/`COLLECTION_ICONS` enums) — fixed by
+importing and reusing the real schemas/enums rather than parallel, weaker ad hoc ones; (2)
+`created_at` was validated and round-tripped all the way through the export/frontmatter format but
+never actually reached the `knowledge_items` insert, so every imported item silently became
+"created now" instead of preserving its original timestamp — fixed by wiring it into the insert
+when present. Separately, while writing this feature's own tests (not self-review), two more real
+bugs surfaced and were fixed before either ever shipped: `build-markdown-export.ts`'s frontmatter+
+body concatenation had one extra `"\n"`, so every imported note/snippet body came back with a
+spurious leading newline (frontmatter already ends in its own trailing `\n`); and Markdown export
+serialized tags as a bare `join(", ")`, which would silently split any tag whose own name legally
+contains a comma into two tags on import — fixed by JSON-encoding tags within the frontmatter value
+instead.
+
+736/736 unit/integration/component tests green (52 new: `lib/settings/export/*` — json/markdown/zip
+builders — `lib/settings/jobs/run-export-job.ts`/`run-import-job.ts`, the four new
+`app/api/settings/export|import(/:jobId)` route tests, the extended `app/api/settings/route.test.ts`
+for the two new profile fields, and the four new `components/settings/*` component tests), typecheck
+clean, lint clean on every touched file. `npm run build` hit the same already-documented, pre-existing
+local-only Turbopack prerender failure noted in the Day 2 QA gate entry (on `/forgot-password`, a page
+this feature never touched; compile and typecheck both succeeded first) — not re-diagnosed here,
+consistent with every prior feature that's hit it.
+
+Also confirmed, live and not just by reading the code: an imported `pdf`/`image`/`file` item with no
+`file_assets` row renders without crashing (the existing `{asset && (...)}` guard in `FileItemView`
+already short-circuits cleanly) — a self-review suggestion, not a bug, so left as-is.
+
+**Not verified this session (manual retest needed):** the RLS on `export_jobs`/`import_jobs` was
+confirmed structurally (policies exist, same owner-scoped pattern as every other table) and the
+`GET .../:jobId` routes are unit-tested to 404 a different owner's job id — but no second real
+account was spun up to attempt reading/downloading another user's export/import job live, the same
+bar Day 3/5's stress tests held other tables to. Worth a live second-account check before this is
+relied on for a production release.
+
 **2026-08-06 — Day 5 Code Snippets shipped** (build-order-complete.md #22), squash-merged into
 `develop`. The sixth Knowledge Item type. `code_snippet_data` (language, code_content) and its
 RLS already existed from `supabase/migrations/001_initial_schema.sql`; new
@@ -1143,14 +1236,22 @@ CLI commands don't default to prod.
   a multi-file batch, exactly what this test exists to catch.
 - [ ] **Staging deploy — no production release today**
 
-## Day 6 — Polish (v1.0 Release Candidate) — release Saturday (0/14)
+## Day 6 — Polish (v1.0 Release Candidate) — release Saturday (6/14)
 
-- [ ] Settings — profile (display name, avatar) full polish
-- [ ] Settings — theme persistence confirmed cross-device
-- [ ] Settings — language selector stub (English only, functional)
-- [ ] Settings — notification preferences (global email reminders on/off)
-- [ ] Settings — data export (Markdown / JSON / ZIP, background job + completion notice)
-- [ ] Settings — data import (JSON / Markdown, background job + summary)
+- [x] Settings — profile (display name, avatar) full polish — already built Day 2; re-confirmed
+  working as part of this feature, no changes needed.
+- [x] Settings — theme persistence confirmed cross-device — already built Day 2; re-confirmed, no
+  changes needed.
+- [x] Settings — language selector stub (English only, functional) — see the 2026-08-06 entry above.
+- [x] Settings — notification preferences (global email reminders on/off) — see the 2026-08-06 entry
+  above. In-app toggle only — the email-sending side of "notification preferences" is wired up when
+  Day 6's Reminders step (#25) builds the actual Resend integration.
+- [x] Settings — data export (Markdown / JSON / ZIP, background job + completion notice) — see the
+  2026-08-06 entry above. Completion notice is in-app only (poll-driven download link) for the same
+  reason — email notification is deferred to #25, documented as a deliberate scope decision, not an
+  oversight.
+- [x] Settings — data import (JSON / Markdown, background job + summary) — see the 2026-08-06 entry
+  above.
 - [ ] Reminders — one-time, daily, weekly, monthly, custom recurrence
 - [ ] Reminders — email delivery via background scheduler, missed-reminder catch-up
 - [ ] Reminders — deactivate on trash, reactivate on restore
