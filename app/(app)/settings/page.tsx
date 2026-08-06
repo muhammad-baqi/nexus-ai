@@ -4,6 +4,10 @@ import { signAvatarUrl } from "@/lib/supabase/avatar";
 import { createClient } from "@/lib/supabase/server";
 import { ChangePasswordForm } from "@/components/auth/change-password-form";
 import { DeleteAccountForm } from "@/components/auth/delete-account-form";
+import { DataExportForm } from "@/components/settings/data-export-form";
+import { DataImportForm } from "@/components/settings/data-import-form";
+import { LanguageSelector } from "@/components/settings/language-selector";
+import { NotificationToggle } from "@/components/settings/notification-toggle";
 import { ProfileForm } from "@/components/settings/profile-form";
 import { ThemeToggle } from "@/components/settings/theme-toggle";
 
@@ -21,7 +25,7 @@ export default async function SettingsPage() {
   // present here — narrowed for TypeScript.
   const { data: profile, error } = await supabase
     .from("profiles")
-    .select("display_name, avatar_url, theme_preference")
+    .select("display_name, avatar_url, theme_preference, language_preference, notification_email_enabled")
     .eq("id", user!.id)
     .single();
 
@@ -42,6 +46,22 @@ export default async function SettingsPage() {
       <hr className="border-border" />
 
       <ThemeToggle initialPreference={profile?.theme_preference ?? "system"} />
+
+      <hr className="border-border" />
+
+      <LanguageSelector initialPreference={profile?.language_preference ?? "en"} />
+
+      <hr className="border-border" />
+
+      <NotificationToggle initialEnabled={profile?.notification_email_enabled ?? true} />
+
+      <hr className="border-border" />
+
+      <DataExportForm />
+
+      <hr className="border-border" />
+
+      <DataImportForm />
 
       <hr className="border-border" />
 

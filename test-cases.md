@@ -624,3 +624,101 @@ consolidated live-browser pass):
       that string → found
 - [ ] Copy-to-clipboard reproduces the exact stored content
 - [ ] Edit language and code → reload → both persist
+
+## Settings — full polish + Data Export/Import (Day 6)
+
+`app/api/settings/route.test.ts` (extended):
+- [x] GET defaults `language_preference` to `en`
+- [x] PATCH persists `language_preference`
+- [x] PATCH rejects an invalid `language_preference` value with 400
+- [x] PATCH flips `notification_email_enabled` true→false→true, reflected on the next GET
+
+`lib/settings/export/build-json-export.test.ts` (new):
+- [x] excludes trashed collections and trashed items
+- [x] a note item's `note.content` matches `knowledge_items.description`
+- [x] a website/file/code_snippet item embeds its own type-specific data, tags included
+- [x] an item with no tags gets `tags: []`, not a missing/undefined field
+
+`lib/settings/export/build-markdown-export.test.ts` (new):
+- [x] produces one folder per collection, sanitizing/deduping folder names
+- [x] a note's `.md` file body is its real content; a non-note item's `.md` body is the metadata
+      frontmatter block instead
+- [x] two items with the same title in one collection get distinct, non-colliding filenames
+
+`lib/settings/export/build-zip-export.test.ts` (new):
+- [x] `export.json` at the root matches `buildJsonExport`'s own output
+- [x] `files/` contains the real bytes of every `file_assets` row for the account, correctly named
+- [x] a Storage download failure for one file skips just that file, not the whole export
+
+`lib/settings/jobs/run-export-job.test.ts` (new):
+- [x] `json`/`markdown`/`zip` each end with `status: 'success'`, a `storage_path`, and `completed_at` set
+- [x] a Storage upload failure resolves the job to `status: 'failed'` with an `error_message`, never throws
+
+`app/api/settings/export/route.test.ts` (new):
+- [x] POST 400s on an invalid `format`
+- [x] POST creates a `pending` `export_jobs` row and returns it with 202
+
+`app/api/settings/export/[jobId]/route.test.ts` (new):
+- [x] GET returns the job's current status
+- [x] GET includes a signed `download_url` only once `status` is `success`
+- [x] GET 404s for a job id belonging to a different owner (never leaks existence)
+
+`lib/settings/jobs/run-import-job.test.ts` (new):
+- [x] JSON import: creates new collections/items/tags from a valid bundle, `created_count` matches,
+      `skipped_count` is 0
+- [x] JSON import: one deliberately malformed item is skipped (`skipped_count` 1, a reason
+      recorded) while the other valid items in the same collection still get created
+- [x] JSON import: an unparseable (non-JSON) source resolves the job to `status: 'failed'`, not a
+      thrown exception
+- [x] Markdown-ZIP import: items are recreated with the correct type-specific data reconstructed
+      from frontmatter (note content, snippet language/code, bookmark url)
+- [x] Markdown-ZIP import: a corrupt/non-ZIP source resolves the job to `status: 'failed'`
+- [x] Round-trip: `buildJsonExport` → `runImportJob` (json) on that same bundle reproduces
+      equivalent collection/item/tag counts
+- [x] JSON import preserves `created_at` from the export rather than defaulting every item to
+      import time (self-review-caught: was validated and round-tripped through the export format
+      but never reached the actual insert)
+- [x] JSON import rejects a website item with a non-http(s) URL (e.g. `javascript:`) as a skipped
+      item, not created (self-review-caught: import bypassed the same URL/protocol validation real
+      bookmark creation enforces, a stored-XSS path via a crafted/shared import file)
+- [x] Markdown-ZIP import: a tag name containing a comma survives export→import as one tag, not two
+      (self-review-caught: comma-joined tag serialization corrupted any tag whose own name
+      contained a comma — fixed by JSON-encoding tags in frontmatter instead)
+
+`app/api/settings/import/route.test.ts` (new):
+- [x] POST 400s when `storage_path` isn't under the caller's own `{user.id}/imports/` prefix, no
+      job row created
+- [x] POST creates a `pending` `import_jobs` row and returns it with 202
+
+`app/api/settings/import/[jobId]/route.test.ts` (new):
+- [x] GET returns status + `created_count`/`skipped_count`/`skip_reasons` once done
+- [x] GET 404s for a job id belonging to a different owner
+
+`components/settings/language-selector.test.tsx` (new):
+- [x] selecting English PATCHes `language_preference: 'en'`
+- [x] a failed PATCH rolls the selection back and shows an error
+
+`components/settings/notification-toggle.test.tsx` (new):
+- [x] toggling PATCHes the flipped `notification_email_enabled` value
+- [x] a failed PATCH rolls the toggle back and shows an error
+
+`components/settings/data-export-form.test.tsx` (new):
+- [x] clicking a format button POSTs `/api/settings/export` with that format and shows "Generating…"
+- [x] polls until `status: 'success'`, then renders a Download link
+- [x] polls until `status: 'failed'`, then renders the error with a working Retry button
+
+`components/settings/data-import-form.test.tsx` (new):
+- [x] rejects a file that isn't `.json`/`.zip` client-side, before any upload
+- [x] rejects a file over the size cap client-side, before any upload
+- [x] a successful `.json` upload + job completion shows the created/skipped summary
+
+`e2e/settings.spec.ts` (new, `@smoke`, written this feature and **run immediately this session**
+via the dockerized `playwright` service — self-review's XSS finding is exactly the class of bug
+this session's own precedent, Code Snippets, says warrants live proof rather than trusting the
+mocked unit tests alone):
+- [x] Toggle language and notification preferences → reload → both persist
+- [x] Export as JSON → wait for ready → download link works (fetched directly, real JSON content
+      confirmed, not just a UI success claim)
+- [x] Import a bundle back in (one valid note + one item carrying a `javascript:` bookmark URL) →
+      summary shows 1 imported / 1 skipped → the valid item's new collection appears in Collections
+      → the malicious item was never created (live proof of the self-review URL-validation fix)

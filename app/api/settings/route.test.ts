@@ -69,6 +69,15 @@ describe("GET /api/settings", () => {
       avatar_url: "https://signed.example.com/a",
     });
   });
+
+  it("defaults language_preference to 'en'", async () => {
+    getUser.mockResolvedValue({ data: { user: { id: "user-1" } } });
+    single.mockResolvedValue({ data: { display_name: "Ada", avatar_url: null, language_preference: "en" } });
+
+    const response = await GET();
+
+    expect(await response.json()).toMatchObject({ language_preference: "en" });
+  });
 });
 
 describe("PATCH /api/settings", () => {
@@ -148,5 +157,42 @@ describe("PATCH /api/settings", () => {
 
     expect(response.status).toBe(400);
     expect(update).not.toHaveBeenCalled();
+  });
+
+  it("updates only the language_preference column when only language_preference is sent", async () => {
+    getUser.mockResolvedValue({ data: { user: { id: "user-1" } } });
+    selectAfterUpdate.mockResolvedValue({
+      data: { display_name: null, avatar_url: null, language_preference: "en" },
+    });
+
+    const response = await PATCH(patchRequestWith({ language_preference: "en" }));
+
+    expect(update).toHaveBeenCalledWith({ language_preference: "en" });
+    expect(await response.json()).toMatchObject({ language_preference: "en" });
+  });
+
+  it("rejects an invalid language_preference value with 400", async () => {
+    const response = await PATCH(patchRequestWith({ language_preference: "fr" }));
+
+    expect(response.status).toBe(400);
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("flips notification_email_enabled true -> false -> true", async () => {
+    getUser.mockResolvedValue({ data: { user: { id: "user-1" } } });
+
+    selectAfterUpdate.mockResolvedValueOnce({
+      data: { display_name: null, avatar_url: null, notification_email_enabled: false },
+    });
+    const toFalse = await PATCH(patchRequestWith({ notification_email_enabled: false }));
+    expect(update).toHaveBeenLastCalledWith({ notification_email_enabled: false });
+    expect(await toFalse.json()).toMatchObject({ notification_email_enabled: false });
+
+    selectAfterUpdate.mockResolvedValueOnce({
+      data: { display_name: null, avatar_url: null, notification_email_enabled: true },
+    });
+    const toTrue = await PATCH(patchRequestWith({ notification_email_enabled: true }));
+    expect(update).toHaveBeenLastCalledWith({ notification_email_enabled: true });
+    expect(await toTrue.json()).toMatchObject({ notification_email_enabled: true });
   });
 });

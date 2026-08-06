@@ -19,7 +19,7 @@ export async function GET() {
 
   const { data: profile, error } = await supabase
     .from("profiles")
-    .select("display_name, avatar_url, theme_preference")
+    .select("display_name, avatar_url, theme_preference, language_preference, notification_email_enabled")
     .eq("id", user.id)
     .single();
 
@@ -35,6 +35,8 @@ export async function GET() {
     display_name: profile.display_name,
     avatar_url: await signAvatarUrl(supabase, profile.avatar_url),
     theme_preference: profile.theme_preference,
+    language_preference: profile.language_preference,
+    notification_email_enabled: profile.notification_email_enabled,
   });
 }
 
@@ -71,18 +73,24 @@ export async function PATCH(request: NextRequest) {
     );
   }
 
-  const updates: Record<string, string | null> = {};
+  const updates: Record<string, string | boolean | null> = {};
   if (result.data.display_name !== undefined) updates.display_name = result.data.display_name;
   if (result.data.avatar_path !== undefined) updates.avatar_url = result.data.avatar_path;
   if (result.data.theme_preference !== undefined) {
     updates.theme_preference = result.data.theme_preference;
+  }
+  if (result.data.language_preference !== undefined) {
+    updates.language_preference = result.data.language_preference;
+  }
+  if (result.data.notification_email_enabled !== undefined) {
+    updates.notification_email_enabled = result.data.notification_email_enabled;
   }
 
   const { data: profile, error } = await supabase
     .from("profiles")
     .update(updates)
     .eq("id", user.id)
-    .select("display_name, avatar_url, theme_preference")
+    .select("display_name, avatar_url, theme_preference, language_preference, notification_email_enabled")
     .single();
 
   if (error) {
@@ -97,5 +105,7 @@ export async function PATCH(request: NextRequest) {
     display_name: profile.display_name,
     avatar_url: await signAvatarUrl(supabase, profile.avatar_url),
     theme_preference: profile.theme_preference,
+    language_preference: profile.language_preference,
+    notification_email_enabled: profile.notification_email_enabled,
   });
 }
