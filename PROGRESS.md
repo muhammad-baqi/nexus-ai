@@ -86,6 +86,66 @@ failed on an unrelated tag-input step, confirmed via the established stash+rerun
 `develop` check to be a pre-existing Turbopack cold-compile flake, not a regression from this
 feature (reproduced identically against the stashed-out baseline).
 
+**2026-08-06 — Day 5 bulk-import stress test + QA gate** (build-order-complete.md #23), Day 5
+now feature-complete (10/13 — the 3 remaining lines are the two explicitly-optional Website
+Bookmarks extras, screenshot/reading-mode, and this gate itself). New
+`e2e/bulk-import-stress-test.spec.ts` (`@smoke`), registers a fresh account and drives a real
+mixed batch through the actual UI: 3 website bookmarks (2 reachable, 1 guaranteed-unreachable, all
+saved immediately without blocking on metadata) + 4 files in one `<input multiple>` batch — a
+valid PDF, a valid PNG, a file declared under the 20MB image cap but actually 21MB (client-side
+rejected before ever reaching Storage), and a file declared `application/pdf` but whose real bytes
+aren't a PDF (passes the client-side check, reaches Storage, then correctly rejected server-side
+by content-sniffing). Directly verified against Postgres (`storage.objects`) afterward that
+exactly the 2 valid files' objects exist for that account — the mismatched-content file's
+Storage object was actually cleaned up (`deleteUploadedObject`), not orphaned, and the oversized
+one never got there in the first place.
+
+This surfaced a real, previously-undiscovered bug (`fix/collection-view-batch-upload-unmount`,
+squash-merged into `develop` before this gate could pass): `UploadFileForm`'s `onUploaded`
+callback fires once per successfully-uploaded file, and `CollectionDetailView.load()`
+unconditionally set the page to its full-page "Loading..." state on every call — unmounting the
+entire page, including `UploadFileForm` itself and its own per-file progress list, the moment the
+*first* file in a multi-file batch finished. File_Uploads.md's own Shared Upload Requirements ask
+for visible "per-file progress"; this bug silently defeated that for any batch of 2+ files
+succeeding together — exactly the scenario a bulk import is. Never caught before because, per this
+file's own File Uploads entry, live-browser verification of that feature was explicitly skipped
+when it shipped. Fixed by giving `load()` a `background` option that refetches without touching
+the full-page loading/error state, used specifically for `onUploaded`. Regression test added
+(mocks `@/lib/supabase/client`'s Storage/`getUser` the same way `upload-file-form.test.tsx` does,
+so it drives a real upload through the real component) — confirmed it fails against the pre-fix
+code (full "Loading..." replaces the page, "Done" never found) via the established stash+rerun
+check, then passes against the fix. 684/684 full suite green, typecheck clean, lint clean.
+
+Separately (and only in this specific Docker/`host.docker.internal`-over-plain-HTTP test
+environment, confirmed not a production issue): `crypto.randomUUID()` threw inside
+`upload-file-form.tsx`, the *only* client-side call site for it in this codebase (avatar upload
+uses a fixed `{user.id}/avatar` path instead, never hitting this) — same secure-context class of
+gap already documented for WebCrypto and, as of this session, the Clipboard API. Worked around
+with a test-only `page.addInitScript` polyfill in the stress-test spec itself (not an app change).
+**Flagged as a real, standalone follow-up, not fixed here:** `upload-file-form.tsx` has no
+fallback for a missing `crypto.randomUUID`, unlike WebCrypto's own graceful plain-PKCE fallback in
+`register-form.tsx` — worth either a small runtime fallback there for defense-in-depth, or (lower
+priority, since this never reproduces on Vercel's real HTTPS origin) fixing why
+`playwright.config.ts`'s `--unsafely-treat-insecure-origin-as-secure` flag isn't fully unlocking
+secure-context APIs in this harness, so future e2e specs touching file upload aren't silently
+blocked the same way.
+
+Remaining qa-checklist.md items in the File Uploads / Website Bookmarks / Code Snippets sections
+were spot-checked rather than re-derived from scratch, since each is already covered by existing,
+currently-green test suites or this session's own live verification: size/type limits (client +
+server) and content-sniffing — this stress test, live; private-by-default Storage + signed-URL
+access — `lib/files/signed-url.ts`'s existing tests + `fetchFileAsset`; permanent-delete removes
+the Storage object (🔴) — `app/api/items/[id]/permanent/route.test.ts`'s existing
+"removes the underlying Storage object" test; PDF-extraction-failure graceful degradation — this
+stress test's synthetic PDF hit exactly this path live (`[extractPdfText] extraction failed`,
+item still usable); bookmark save never blocked on metadata, duplicate prompt, manual retry —
+existing `e2e/bookmarks.spec.ts` plus this stress test's immediate-save confirmation;
+`code_snippet_data`'s RLS policy — not re-verified live this session (no second real account was
+spun up specifically for it), but it's structurally identical to `file_assets`/`website_metadata`'s
+already-live-verified owner-scoped-through-`knowledge_items` pattern (same migration file, same
+shape) — worth a live second-account check before this is relied on for a production release, same
+bar every other table's RLS got.
+
 **🐛 Auth flow confusion bug, reported 2026-08-05 — investigated and partially fixed 2026-08-06**
 (`fix/register-resend-rate-limit`, squash-merged into `develop`). Two reports, investigated
 separately by reproducing live against real local Supabase + Mailpit (`docker compose down` +
@@ -1059,7 +1119,7 @@ CLI commands don't default to prod.
   2026-08-04 entry above (41ms worst case).
 - [ ] **v0.2 released to production** ✅
 
-## Day 5 — Knowledge Sources — release Friday (staging only) (10/13)
+## Day 5 — Knowledge Sources — release Friday (staging only) (11/13)
 
 - [x] Website bookmarks — paste URL → immediate save, async metadata fetch — see the 2026-08-05
   entry above
@@ -1069,15 +1129,18 @@ CLI commands don't default to prod.
 - [ ] Website bookmarks — screenshot (optional, best-effort)
 - [ ] Website bookmarks — reading mode (optional, time-permitting)
 - [x] File uploads — PDFs (upload, in-app preview, download) — see the 2026-08-05 entry above.
-  **Not yet manually verified live** — see that entry's "Not verified this session" note.
-- [x] File uploads — PDF text extraction background job (search-indexed; graceful failure state) — see the 2026-08-05 entry above. Not yet manually verified live.
-- [x] File uploads — Images (upload, thumbnail + full-size preview, download) — see the 2026-08-05 entry above; list/grid-view thumbnails specifically are a named, not-yet-closed gap (self-review). Not yet manually verified live.
-- [x] File uploads — General files (allow-listed types, metadata view or inline preview, download) — see the 2026-08-05 entry above. Not yet manually verified live.
-- [x] File uploads — size/type limits enforced client- and server-side — see the 2026-08-05 entry above. Not yet manually verified live.
+  **Verified live 2026-08-06** via the bulk-import stress test (upload, item creation, download
+  path) — list/grid-view in-app preview rendering itself still not manually eyeballed.
+- [x] File uploads — PDF text extraction background job (search-indexed; graceful failure state) — see the 2026-08-05 entry above. **Verified live 2026-08-06** — the stress test's synthetic PDF hit the graceful-failure path for real (`[extractPdfText] extraction failed`, item still usable).
+- [x] File uploads — Images (upload, thumbnail + full-size preview, download) — see the 2026-08-05 entry above; list/grid-view thumbnails specifically remain a named, not-yet-closed gap (self-review). **Upload path verified live 2026-08-06** via the stress test; thumbnail rendering itself not manually eyeballed.
+- [x] File uploads — General files (allow-listed types, metadata view or inline preview, download) — see the 2026-08-05 entry above. Not yet manually verified live (this session's stress test covered PDF/Image, not the general-file type specifically).
+- [x] File uploads — size/type limits enforced client- and server-side — see the 2026-08-05 entry above. **Verified live 2026-08-06** — the stress test's oversized/mismatched-content files were rejected client- and server-side respectively, confirmed via direct Postgres check that no Storage orphan remained.
 - [x] Code snippets — create/edit, language select, syntax highlighting, copy-to-clipboard — see
   the 2026-08-06 entry above. Verified live this session (create, edit, search-by-in-code-string,
   copy, reload-persistence all confirmed via the dockerized `playwright` service).
-- [ ] Bulk import stress test (websites + files)
+- [x] Bulk import stress test (websites + files) — see the 2026-08-06 QA-gate entry above. Also
+  caught and fixed a real bug (`fix/collection-view-batch-upload-unmount`) that only surfaces with
+  a multi-file batch, exactly what this test exists to catch.
 - [ ] **Staging deploy — no production release today**
 
 ## Day 6 — Polish (v1.0 Release Candidate) — release Saturday (0/14)
