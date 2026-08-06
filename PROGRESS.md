@@ -13,6 +13,79 @@ in its own entry, under a **"Not verified this session (manual retest needed):"*
 integration/component tests, typecheck, and lint are still run and green for every feature —
 only the browser-driven and at-scale checks are deferred.
 
+**2026-08-06 — session testing-scope update.** New session, same spirit as above with one
+refinement: live-browser/e2e specs are still **written** per feature (with concrete, feature-
+specific test cases), but their actual run is deferred to a consolidated pass rather than
+per-feature — except where self-review surfaces a real bug whose fix specifically needs live
+proof (see Code Snippets below), in which case that one spec is run immediately rather than
+deferred. Unit/integration/component tests, typecheck, and lint remain per-feature, unchanged.
+
+**2026-08-06 — Day 5 Code Snippets shipped** (build-order-complete.md #22), squash-merged into
+`develop`. The sixth Knowledge Item type. `code_snippet_data` (language, code_content) and its
+RLS already existed from `supabase/migrations/001_initial_schema.sql`; new
+`supabase/migrations/008_code_snippets_search.sql` folds both into `knowledge_items.search_vector`
+(code_content at weight C alongside description/file text, language at weight D), mirroring
+`007_file_uploads.sql`'s identical pattern for `file_assets.extracted_text` — verified live
+against local Supabase that a string existing only inside a snippet's code is findable via
+`search_knowledge_items()`. `POST /api/items` gained a `createCodeSnippet` branch (title/language/
+code_content all optional with defaults, same "New Snippet → blank item → edit in place" flow
+Notes already established) that rolls back the `knowledge_items` row if the `code_snippet_data`
+insert fails, mirroring `createFileItem`'s rollback precedent. `GET`/`PATCH /api/items/:id`
+extended to embed/update `code_snippet_data` — a snippet-fields-only PATCH (no `knowledge_items`
+column touched) skips the `knowledge_items` UPDATE entirely rather than sending PostgREST an empty
+patch body. New `lib/code-snippets/languages.ts` curates ~20 languages on top of
+`@uiw/codemirror-extensions-langs`, falling back to plain-text rendering for anything unrecognized
+(`Code_Snippets.md`'s Error States requirement, not a separate code path — just what an unmatched
+lookup naturally does). New `components/code-snippets/code-editor.tsx` (thin `@uiw/react-codemirror`
+wrapper, theme read once from the `dark` class on mount — no live listener, same Day-2-established
+scope cut) and `code-snippet-view.tsx` (Edit/Save toggle, explicit Save rather than autosave — the
+spec explicitly leaves this to implementation and snippets are typically pasted in rather than
+composed over a session — plus one-click copy-to-clipboard). `CollectionDetailView` gained a "New
+Snippet" button mirroring "New Note"'s create-blank-and-navigate flow.
+
+**New dependencies** (flagging per CLAUDE.md): `@uiw/react-codemirror` +
+`@uiw/codemirror-extensions-langs` — real per-language syntax highlighting with line numbers isn't
+reasonable to hand-roll; `npm audit` confirmed no new/elevated vulnerabilities (same 6 pre-existing
+transitive-dependency advisories as every other feature this Day, unrelated to this addition).
+
+Self-review (`code-reviewer` subagent) caught one real, significant bug, fixed: a failed
+`code_snippet_data` write on `PATCH` returned **200 with the user's edited code silently
+dropped** — unlike `note_versions` (history bookkeeping, where the current state is already saved
+regardless), `code_snippet_data` *is* the item's current content, so a write failure there has no
+safe fallback and must fail loudly (CLAUDE.md rule 4) rather than return success. Fixed to return
+500. Investigating that surfaced a second, related bug in the client: `code_snippet_data` is only
+included in a PATCH response when that request actually touched `language`/`code_content` — a
+plain favorite/archive toggle omits it — but `CodeSnippetView`'s merge logic didn't fall back to
+the previous value the way `tags` already does, so toggling Favorite or Archive on any snippet
+would have blanked the visible code editor. Fixed with the same `?? prev?.` fallback `tags` uses.
+Both fixed with regression tests (one unit test each, plus the live e2e spec below run immediately
+rather than deferred, specifically to prove the save-failure fix works end-to-end — self-review
+flagged that this bug class is exactly the kind that needs live proof, not just a mocked test).
+Self-review's remaining suggestions (a `.min(1)` on the `language` schema field, clarifying
+comments) were also applied; one (client-side pre-submit length-check on `code_content`, matching
+File_Uploads.md's precedent) was left as a deliberate, documented scope gap — server-side
+validation already blocks it correctly via zod, this is purely a UX nicety.
+
+20 new/extended unit/integration tests green (5 in `languages.test.ts`, extensions to both
+`app/api/items/route.test.ts` and `app/api/items/[id]/route.test.ts` including a regression test
+for the self-review-caught save-failure bug, `collection-detail-view.test.tsx`, and the new
+`code-snippet-view.test.tsx` including a regression test for the merge-logic bug), 683/683 full
+suite green, typecheck clean, lint clean on every touched file (one new
+`react-hooks/set-state-in-effect` instance on `CodeEditor`'s mount-time theme read — the same
+pre-existing, already-accepted pattern documented repeatedly elsewhere in this file, now 8 total
+instances repo-wide). `e2e/code-snippets.spec.ts` (`@smoke`) was written and **run this session**
+(not deferred, per the testing-scope update above) via the dockerized `playwright` service: create
+→ edit language/code → save → Global Search for a string that only exists inside the code → found
+→ copy-to-clipboard (gracefully degrades to "Couldn't copy" in this specific Docker/insecure-
+context test harness, where `navigator.clipboard` is unavailable for the same reason this repo's
+WebCrypto console warning already documents — the exact-copy behavior itself is covered by the
+mocked-clipboard unit test instead) → edit again → reload → both language and code persist. Also
+re-ran `collections.spec.ts`/`notes.spec.ts`/`bookmarks.spec.ts` as a regression check on the
+shared files this feature touched (`items/route.ts`, `collection-detail-view.tsx`) — `notes.spec.ts`
+failed on an unrelated tag-input step, confirmed via the established stash+rerun-against-clean-
+`develop` check to be a pre-existing Turbopack cold-compile flake, not a regression from this
+feature (reproduced identically against the stashed-out baseline).
+
 **🐛 Auth flow confusion bug, reported 2026-08-05 — investigated and partially fixed 2026-08-06**
 (`fix/register-resend-rate-limit`, squash-merged into `develop`). Two reports, investigated
 separately by reproducing live against real local Supabase + Mailpit (`docker compose down` +
@@ -986,7 +1059,7 @@ CLI commands don't default to prod.
   2026-08-04 entry above (41ms worst case).
 - [ ] **v0.2 released to production** ✅
 
-## Day 5 — Knowledge Sources — release Friday (staging only) (9/13)
+## Day 5 — Knowledge Sources — release Friday (staging only) (10/13)
 
 - [x] Website bookmarks — paste URL → immediate save, async metadata fetch — see the 2026-08-05
   entry above
@@ -1001,7 +1074,9 @@ CLI commands don't default to prod.
 - [x] File uploads — Images (upload, thumbnail + full-size preview, download) — see the 2026-08-05 entry above; list/grid-view thumbnails specifically are a named, not-yet-closed gap (self-review). Not yet manually verified live.
 - [x] File uploads — General files (allow-listed types, metadata view or inline preview, download) — see the 2026-08-05 entry above. Not yet manually verified live.
 - [x] File uploads — size/type limits enforced client- and server-side — see the 2026-08-05 entry above. Not yet manually verified live.
-- [ ] Code snippets — create/edit, language select, syntax highlighting, copy-to-clipboard
+- [x] Code snippets — create/edit, language select, syntax highlighting, copy-to-clipboard — see
+  the 2026-08-06 entry above. Verified live this session (create, edit, search-by-in-code-string,
+  copy, reload-persistence all confirmed via the dockerized `playwright` service).
 - [ ] Bulk import stress test (websites + files)
 - [ ] **Staging deploy — no production release today**
 
