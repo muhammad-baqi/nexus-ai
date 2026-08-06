@@ -20,6 +20,17 @@ per-feature — except where self-review surfaces a real bug whose fix specifica
 proof (see Code Snippets below), in which case that one spec is run immediately rather than
 deferred. Unit/integration/component tests, typecheck, and lint remain per-feature, unchanged.
 
+**2026-08-06 — session paused cleanly at end of day.** Day 6 is now 6/14 (Settings — full polish +
+Data Export/Import, below, shipped and squash-merged into `develop` this session; Day 5 was already
+code-complete going in). Local Supabase (`npx supabase stop`) and Docker (`docker compose down`)
+were both stopped cleanly at the end of this session. **To resume:** `git checkout develop && git
+pull`, `docker compose up -d app`, `npx supabase start` (needed — the next feature, Reminders
+build-order-complete.md #25, touches the `reminders` table/RLS and will need live DB testing). Next
+up per `build-order-complete.md`: #25 Reminders — full notification system (one-time/daily/weekly/
+monthly/custom recurrence, background scheduler + email via Resend — the first real wiring of the
+`resend` dependency, already installed but unused per this session's Settings entry below), then #26
+Sharing, #27 Activity log/accessibility/error states, #28 Day 6 QA gate.
+
 **2026-08-06 — Day 6 Settings — full polish + Data Export/Import shipped**
 (build-order-complete.md #24), squash-merged into `develop`. First Day 6 feature — Day 5
 (Knowledge Sources) is code-complete on `develop` (11/13, the 2 remaining lines are explicitly
