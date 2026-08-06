@@ -1,10 +1,22 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const push = vi.fn();
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push }),
+}));
+
+// Real UploadFileForm is left unmocked (unlike MoveItemControl elsewhere) so its onUploaded
+// callback can be triggered organically for the regression test below, driving Storage/getUser
+// through the same mock shape upload-file-form.test.tsx itself uses.
+const upload = vi.fn();
+const getUser = vi.fn();
+vi.mock("@/lib/supabase/client", () => ({
+  createClient: () => ({
+    auth: { getUser },
+    storage: { from: () => ({ upload }) },
+  }),
 }));
 
 import { CollectionDetailView } from "./collection-detail-view";
@@ -18,6 +30,8 @@ const baseCollection = { id: "col-1", name: "Travel", description: "Trip plannin
 describe("CollectionDetailView", () => {
   beforeEach(() => {
     push.mockReset();
+    getUser.mockReset();
+    upload.mockReset();
     vi.stubGlobal("fetch", vi.fn());
   });
 
@@ -102,6 +116,59 @@ describe("CollectionDetailView", () => {
       }),
     );
     expect(push).toHaveBeenCalledWith("/items/item-3");
+  });
+
+  it("UploadFileForm's onUploaded refreshes the item list without unmounting the page into the full-page 'Loading...' state", async () => {
+    // Regression test for a real bug the Day 5 bulk-import stress test caught: a batch upload's
+    // onUploaded fires once per successfully uploaded file, and used to unconditionally flip this
+    // component to its full-page "Loading..." state on every call — unmounting UploadFileForm
+    // itself (and its own in-progress per-file status list) mid-batch, the moment the *first*
+    // file in a multi-file batch finished. `load({ background: true })` must keep the page (and
+    // the still-uploading UploadFileForm) mounted throughout. Drives a real upload through the
+    // real (unmocked) UploadFileForm, same Storage/getUser mock shape upload-file-form.test.tsx
+    // itself uses, so this proves the actual integration, not just a simulated callback.
+    getUser.mockResolvedValue({ data: { user: { id: "user-1" } } });
+    upload.mockResolvedValue({ error: null });
+
+    let itemsGetCallCount = 0;
+    let resolveBackgroundItemsRefetch: (value: unknown) => void = () => {};
+    (fetch as ReturnType<typeof vi.fn>).mockImplementation((url: string, init?: RequestInit) => {
+      if (init?.method === "POST") {
+        return Promise.resolve(jsonResponse({ id: "item-1", type: "file", title: "report.pdf" }, true));
+      }
+      if (url.startsWith("/api/collections/")) return Promise.resolve(jsonResponse(baseCollection));
+      // GET /api/items?collection_id=... — the first call is the initial load (resolves right
+      // away); every call after that is a background refresh, deliberately held open here so its
+      // in-flight state can be observed.
+      itemsGetCallCount++;
+      if (itemsGetCallCount === 1) return Promise.resolve(jsonResponse({ items: [] }));
+      return new Promise((resolve) => {
+        resolveBackgroundItemsRefetch = resolve;
+      });
+    });
+
+    render(<CollectionDetailView collectionId="col-1" />);
+    await screen.findByText(/no items yet/i);
+
+    fireEvent.click(screen.getByRole("button", { name: /upload files/i }));
+    const input = screen.getByLabelText("Choose files to upload") as HTMLInputElement;
+    const file = new File(["%PDF-1.7 content"], "report.pdf", { type: "application/pdf" });
+    Object.defineProperty(file, "size", { value: 1024 });
+    fireEvent.change(input, { target: { files: [file] } });
+
+    await screen.findByText("Done");
+
+    // The background refetch onUploaded triggered is deliberately still pending — the page (and
+    // UploadFileForm's own "Done" status, still showing) must stay mounted throughout, not swap
+    // to the full-page loading fallback.
+    expect(screen.getByText("Travel")).toBeInTheDocument();
+    expect(screen.queryByText("Loading...")).not.toBeInTheDocument();
+    expect(screen.getByText("Done")).toBeInTheDocument();
+
+    resolveBackgroundItemsRefetch(
+      jsonResponse({ items: [{ id: "item-1", type: "file", title: "report.pdf", updated_at: "" }] }),
+    );
+    await waitFor(() => expect(screen.queryByText(/no items yet/i)).not.toBeInTheDocument());
   });
 
   it("shows a retry-able error state on a failed load", async () => {

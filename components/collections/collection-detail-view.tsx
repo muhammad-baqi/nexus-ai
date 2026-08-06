@@ -56,23 +56,44 @@ export function CollectionDetailView({ collectionId }: Props) {
   // existing Trash view already established.
   const [showArchived, setShowArchived] = useState(false);
 
-  const load = useCallback(async () => {
-    setStatus("loading");
-    const [collectionRes, itemsRes] = await Promise.all([
-      fetch(`/api/collections/${collectionId}`),
-      fetch(`/api/items?collection_id=${collectionId}`),
-    ]);
+  // `background: true` refetches without flipping to the full-page "Loading..."/error states —
+  // needed for UploadFileForm's onUploaded callback below, which fires once per successfully
+  // uploaded file in a batch. Each call used to unconditionally call setStatus("loading") first,
+  // which unmounts this entire component (including UploadFileForm's own in-progress child, with
+  // its per-file status list) every time an earlier file in the same batch finishes — discovered
+  // via the Day 5 bulk-import stress test, where a 2-file batch upload's progress list vanished
+  // mid-upload after the first file's success triggered this refresh. A background refresh
+  // failure is also just logged, not surfaced as a full-page error — replacing an already-working
+  // page with an error screen over a transient list-refresh hiccup during upload would be worse
+  // than briefly stale data (CLAUDE.md rule 7: a failing enhancement shouldn't take down the core
+  // feature already on screen).
+  const load = useCallback(
+    async (options: { background?: boolean } = {}) => {
+      if (!options.background) setStatus("loading");
+      const [collectionRes, itemsRes] = await Promise.all([
+        fetch(`/api/collections/${collectionId}`),
+        fetch(`/api/items?collection_id=${collectionId}`),
+      ]);
 
-    if (!collectionRes.ok || !itemsRes.ok) {
-      setStatus("error");
-      return;
-    }
+      if (!collectionRes.ok || !itemsRes.ok) {
+        if (options.background) {
+          console.error("[CollectionDetailView] background refresh failed:", {
+            collectionStatus: collectionRes.status,
+            itemsStatus: itemsRes.status,
+          });
+          return;
+        }
+        setStatus("error");
+        return;
+      }
 
-    setCollection(await collectionRes.json());
-    const itemsBody = await itemsRes.json();
-    setItems(itemsBody.items);
-    setStatus("loaded");
-  }, [collectionId]);
+      setCollection(await collectionRes.json());
+      const itemsBody = await itemsRes.json();
+      setItems(itemsBody.items);
+      setStatus("loaded");
+    },
+    [collectionId],
+  );
 
   useEffect(() => {
     load();
@@ -130,7 +151,7 @@ export function CollectionDetailView({ collectionId }: Props) {
     return (
       <p className="text-destructive text-sm" role="alert">
         Something went wrong loading this collection.{" "}
-        <button type="button" className="underline" onClick={load}>
+        <button type="button" className="underline" onClick={() => load()}>
           Retry
         </button>
       </p>
@@ -157,7 +178,7 @@ export function CollectionDetailView({ collectionId }: Props) {
             {isCreating ? "Creating..." : "New Snippet"}
           </Button>
           <SaveBookmarkForm collectionId={collectionId} />
-          <UploadFileForm collectionId={collectionId} onUploaded={load} />
+          <UploadFileForm collectionId={collectionId} onUploaded={() => load({ background: true })} />
         </div>
       </div>
 
