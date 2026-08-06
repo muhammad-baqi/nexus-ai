@@ -41,7 +41,18 @@ export async function GET(request: NextRequest) {
 
   if (!result.success) {
     // Type is unknown/missing, so we can't know which page to send the user back to — the
-    // email-verification destination is the safer generic fallback of the two.
+    // email-verification destination is the safer generic fallback of the two. This branch
+    // fires even for a genuine password-reset link if token_hash/type got dropped or mangled
+    // before reaching us (e.g. an email client rewriting the URL, or a corporate link-scanner
+    // pre-fetching it) — logged so a "reset link showed the wrong copy" report can actually be
+    // diagnosed instead of guessed at.
+    // Never log the raw token_hash — it's a live, single-use credential (redeeming it via
+    // verifyOtp grants a session or lets the holder set a new password), equivalent to a
+    // bearer token for that action. Presence/shape is enough to diagnose this branch.
+    console.error(
+      "[auth/confirm] query failed validation, falling back to /verify-email?status=invalid:",
+      { hasTokenHash: Boolean(searchParams.get("token_hash")), type: searchParams.get("type") },
+    );
     return NextResponse.redirect(`${origin}/verify-email?status=invalid`);
   }
 

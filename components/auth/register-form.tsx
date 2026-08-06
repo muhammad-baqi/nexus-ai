@@ -23,12 +23,30 @@ const FIELD_KEYS = ["email", "password", "confirmPassword"] as const;
 // only contracts the code — message wording isn't a stable API.
 const DUPLICATE_EMAIL_ERROR_CODE = "user_already_exists";
 
+// GoTrue returns this same code for two different things, and the client can't tell them apart:
+// (1) the per-address `max_frequency` resend cooldown (60s, supabase/config.toml) — reached when
+// someone re-submits registration for an email they (or an earlier attempt) already just signed
+// up with moments ago, confirmed live as an AuthApiError "For security purposes, you can only
+// request this after N seconds"; and (2) `[auth.rate_limit] email_sent`, a project-wide hourly
+// send quota that (per config.toml's own comment) only applies once custom SMTP is configured —
+// this repo hasn't wired up Resend yet (`.claude/docs/infrastructure.md` — still "needed from Day
+// 6"), so staging/prod are still on Supabase's own hosted mailer, which has its own low default
+// quota. In case (1) a confirmation email genuinely is already on its way; in case (2) nothing
+// was ever sent for this address. Since it can't be distinguished here, the UI below must not
+// claim with certainty that an email exists — before this was special-cased at all, it fell
+// through to the generic error branch ("Something went wrong creating your account"), which is
+// case (1)'s bug (masks a real pending email) but was at least not case (2)'s risk (falsely
+// promising one). Worth confirming staging/prod's actual Supabase Auth email quota before relying
+// on this further.
+const RATE_LIMIT_ERROR_CODE = "over_email_send_rate_limit";
+
 export function RegisterForm() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [status, setStatus] = useState<"idle" | "submitting" | "submitted" | "error">("idle");
+  const [wasRateLimited, setWasRateLimited] = useState(false);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -54,18 +72,28 @@ export function RegisterForm() {
 
     setFieldErrors({});
     setStatus("submitting");
+    setWasRateLimited(false);
 
     const supabase = createClient();
     const { error } = await supabase.auth.signUp({ email: trimmedEmail, password });
 
-    if (error && error.code !== DUPLICATE_EMAIL_ERROR_CODE) {
+    if (
+      error &&
+      error.code !== DUPLICATE_EMAIL_ERROR_CODE &&
+      error.code !== RATE_LIMIT_ERROR_CODE
+    ) {
       console.error("[register] signUp failed:", error);
       setStatus("error");
       return;
     }
 
-    if (error) {
+    if (error?.code === DUPLICATE_EMAIL_ERROR_CODE) {
       console.warn("[register] signUp reported a duplicate email — showing success anyway per the no-enumeration requirement:", error);
+    }
+
+    if (error?.code === RATE_LIMIT_ERROR_CODE) {
+      console.warn("[register] signUp rate-limited (per-address resend cooldown or project-wide send quota — can't distinguish client-side):", error);
+      setWasRateLimited(true);
     }
 
     setEmail(trimmedEmail);
@@ -76,10 +104,18 @@ export function RegisterForm() {
     return (
       <div className="flex flex-col gap-2" role="status">
         <h1 className="text-xl font-semibold">Check your email</h1>
-        <p className="text-muted-foreground text-sm">
-          We&apos;ve sent a verification link to {email}. Click it to activate your account —
-          you&apos;ll be signed in automatically.
-        </p>
+        {wasRateLimited ? (
+          <p className="text-muted-foreground text-sm">
+            You already requested one recently, so we can&apos;t confirm a brand-new email just
+            went out for {email} — check your inbox (and spam folder) for one from moments ago.
+            If you don&apos;t see it, wait a bit and use the button below.
+          </p>
+        ) : (
+          <p className="text-muted-foreground text-sm">
+            We&apos;ve sent a verification link to {email}. Click it to activate your account —
+            you&apos;ll be signed in automatically.
+          </p>
+        )}
 
         <ResendVerificationButton email={email} />
       </div>

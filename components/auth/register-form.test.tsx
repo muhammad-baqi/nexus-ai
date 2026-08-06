@@ -79,6 +79,25 @@ describe("RegisterForm", () => {
     expect(await screen.findByText(/check your email/i)).toBeInTheDocument();
   });
 
+  it("shows the check-your-email screen with a resend-cooldown note when signUp is rate-limited on resend", async () => {
+    // Regression test: re-submitting registration for an email that just signed up moments ago
+    // (within GoTrue's 60s max_frequency window) returns this code, not
+    // DUPLICATE_EMAIL_ERROR_CODE — confirmed live against real local Supabase, where the raw
+    // error was "AuthApiError: For security purposes, you can only request this after 58
+    // seconds." Before this was special-cased it fell through to the generic error branch
+    // ("Something went wrong creating your account"), hiding the fact that a valid confirmation
+    // email from the earlier attempt already existed.
+    signUp.mockResolvedValue({
+      data: {},
+      error: { message: "For security purposes, you can only request this after 58 seconds.", code: "over_email_send_rate_limit" },
+    });
+    render(<RegisterForm />);
+    await fillForm("recently-registered@example.com", "abcd1234");
+
+    expect(await screen.findByText(/check your email/i)).toBeInTheDocument();
+    expect(screen.getByText(/already requested one recently/i)).toBeInTheDocument();
+  });
+
   it("shows a retry-able error message on a genuine signUp failure", async () => {
     signUp.mockResolvedValue({
       data: {},

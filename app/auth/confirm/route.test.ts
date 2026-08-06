@@ -62,6 +62,21 @@ describe("GET /auth/confirm", () => {
     );
   });
 
+  it("never logs the raw token_hash value on a validation-failure redirect", async () => {
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await GET(requestFor("?token_hash=super-secret-live-token&type=bogus"));
+
+    expect(consoleErrorSpy).toHaveBeenCalled();
+    for (const call of consoleErrorSpy.mock.calls) {
+      expect(JSON.stringify(call)).not.toContain("super-secret-live-token");
+    }
+    const loggedPayload = consoleErrorSpy.mock.calls[0]?.[1];
+    expect(loggedPayload).toMatchObject({ hasTokenHash: true, type: "bogus" });
+
+    consoleErrorSpy.mockRestore();
+  });
+
   it("redirects to status=expired when verifyOtp reports an expired token", async () => {
     verifyOtp.mockResolvedValue({ error: { message: "Token has expired", code: "otp_expired" } });
 
