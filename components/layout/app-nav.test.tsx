@@ -11,7 +11,7 @@ vi.mock("next/navigation", () => ({
 import { AppNav } from "./app-nav";
 
 describe("AppNav", () => {
-  it("links to Dashboard, Search, Collections, Tags, Trash, and Settings, and renders Logout", () => {
+  it("links to Dashboard, Search, Collections, Tags, Trash, Activity, and Settings, and renders Logout", () => {
     render(<AppNav />);
 
     expect(screen.getByRole("link", { name: "Dashboard" })).toHaveAttribute("href", "/dashboard");
@@ -22,6 +22,7 @@ describe("AppNav", () => {
     );
     expect(screen.getByRole("link", { name: "Tags" })).toHaveAttribute("href", "/tags");
     expect(screen.getByRole("link", { name: "Trash" })).toHaveAttribute("href", "/trash");
+    expect(screen.getByRole("link", { name: "Activity" })).toHaveAttribute("href", "/activity");
     expect(screen.getByRole("link", { name: "Settings" })).toHaveAttribute("href", "/settings");
     expect(screen.getByRole("button", { name: /log out/i })).toBeInTheDocument();
   });

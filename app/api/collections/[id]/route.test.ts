@@ -48,6 +48,10 @@ vi.mock("@/lib/supabase/server", () => ({
   }),
 }));
 
+// Isolates logActivity's own insert (already covered by log-activity.test.ts) from this file's
+// per-table query-builder mocks, which don't model an `activity_log` table at all.
+vi.mock("@/lib/activity/log-activity", () => ({ logActivity: vi.fn() }));
+
 import { DELETE, GET, PATCH } from "./route";
 
 function requestFor(method: string, body?: unknown) {

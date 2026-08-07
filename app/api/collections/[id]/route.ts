@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 
+import { logActivity } from "@/lib/activity/log-activity";
 import { requireUser } from "@/lib/supabase/require-user";
 import { createClient } from "@/lib/supabase/server";
 import { collectionIdSchema, updateCollectionSchema } from "@/lib/validation/collections";
@@ -108,6 +109,7 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
     );
   }
 
+  await logActivity(supabase, { ownerId: user.id, action: "edited", collectionId: id });
   return NextResponse.json(data);
 }
 
@@ -160,8 +162,10 @@ export async function DELETE(_request: NextRequest, { params }: RouteParams) {
 
   if (cascadeError) {
     console.error("[api/collections/:id] cascading item trash failed:", cascadeError);
+    await logActivity(supabase, { ownerId: user.id, action: "deleted", collectionId: id });
     return NextResponse.json({ ...data, itemCascadeIncomplete: true });
   }
 
+  await logActivity(supabase, { ownerId: user.id, action: "deleted", collectionId: id });
   return NextResponse.json(data);
 }

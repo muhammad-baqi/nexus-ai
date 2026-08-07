@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 
+import { logActivity } from "@/lib/activity/log-activity";
 import { itemShareUrl } from "@/lib/items/share-link";
 import { generateShareToken } from "@/lib/sharing/generate-token";
 import { requireUser } from "@/lib/supabase/require-user";
@@ -85,6 +86,7 @@ export async function POST(_request: NextRequest, { params }: RouteParams) {
     return shareFailedResponse();
   }
 
+  await logActivity(supabase, { ownerId: user.id, action: "shared", knowledgeItemId: id });
   return NextResponse.json({ token: created.token, url: itemShareUrl(created.token) }, { status: 201 });
 }
 

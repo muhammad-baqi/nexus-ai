@@ -48,6 +48,10 @@ vi.mock("@/lib/supabase/server", () => ({
   }),
 }));
 
+// Isolates logActivity's own insert (already covered by log-activity.test.ts) from this file's
+// shared insertCalls tracking, which isn't scoped per table.
+vi.mock("@/lib/activity/log-activity", () => ({ logActivity: vi.fn() }));
+
 import { DELETE, POST } from "./route";
 
 function requestFor(method: "POST" | "DELETE") {

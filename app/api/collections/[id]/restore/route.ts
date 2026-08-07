@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 
+import { logActivity } from "@/lib/activity/log-activity";
 import { requireUser } from "@/lib/supabase/require-user";
 import { createClient } from "@/lib/supabase/server";
 import { collectionIdSchema } from "@/lib/validation/collections";
@@ -82,9 +83,11 @@ export async function POST(_request: NextRequest, { params }: RouteParams) {
 
   if (cascadeError) {
     console.error("[api/collections/:id/restore] cascading item restore failed:", cascadeError);
+    await logActivity(supabase, { ownerId: user.id, action: "restored", collectionId: id });
     return NextResponse.json({ ...data, itemCascadeIncomplete: true });
   }
 
+  await logActivity(supabase, { ownerId: user.id, action: "restored", collectionId: id });
   return NextResponse.json(data);
 }
 

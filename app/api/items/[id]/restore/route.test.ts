@@ -20,7 +20,7 @@ function queueResponse(table: string, value: ResolvedValue) {
 
 function createQueryBuilder(table: string) {
   const builder: Record<string, unknown> = {};
-  const chainable = ["select", "eq", "is", "not", "order", "limit"];
+  const chainable = ["select", "eq", "is", "not", "order", "limit", "insert"];
   for (const method of chainable) {
     builder[method] = vi.fn(() => builder);
   }

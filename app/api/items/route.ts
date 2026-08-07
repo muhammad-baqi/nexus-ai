@@ -1,5 +1,6 @@
 import { after, NextResponse, type NextRequest } from "next/server";
 
+import { logActivity } from "@/lib/activity/log-activity";
 import { fetchBookmarkMetadata } from "@/lib/bookmarks/fetch-bookmark-metadata";
 import { normalizeUrlForDuplicateCheck } from "@/lib/bookmarks/normalize-url";
 import { formatMaxSizeLabel, maxBytesForType } from "@/lib/files/constants";
@@ -193,6 +194,7 @@ async function createNote(body: unknown) {
     );
   }
 
+  await logActivity(supabase, { ownerId: user.id, action: "created", knowledgeItemId: data.id });
   return NextResponse.json(data, { status: 201 });
 }
 
@@ -311,6 +313,7 @@ async function createBookmark(body: unknown) {
     after(() => fetchBookmarkMetadata(supabase, item.id, url));
   }
 
+  await logActivity(supabase, { ownerId: user.id, action: "created", knowledgeItemId: item.id });
   return NextResponse.json(item, { status: 201 });
 }
 
@@ -444,6 +447,7 @@ async function createFileItem(body: unknown) {
     after(() => extractPdfText(supabase, item.id, storage_path));
   }
 
+  await logActivity(supabase, { ownerId: user.id, action: "created", knowledgeItemId: item.id });
   return NextResponse.json(item, { status: 201 });
 }
 
@@ -515,5 +519,6 @@ async function createCodeSnippet(body: unknown) {
     );
   }
 
+  await logActivity(supabase, { ownerId: user.id, action: "created", knowledgeItemId: item.id });
   return NextResponse.json(item, { status: 201 });
 }

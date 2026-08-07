@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 
+import { logActivity } from "@/lib/activity/log-activity";
 import { requireUser } from "@/lib/supabase/require-user";
 import { createClient } from "@/lib/supabase/server";
 import {
@@ -114,5 +115,6 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  await logActivity(supabase, { ownerId: user.id, action: "created", collectionId: data.id });
   return NextResponse.json(data, { status: 201 });
 }
