@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 
 import { fetchCodeSnippetData } from "@/lib/items/code-snippet";
 import { fetchFileAsset } from "@/lib/items/file-asset";
+import { deactivateRemindersForItem } from "@/lib/items/reminders";
 import { fetchItemTags } from "@/lib/items/tags";
 import { verifyCollectionOwnership } from "@/lib/items/verify-collection-ownership";
 import { fetchWebsiteMetadata } from "@/lib/items/website-metadata";
@@ -314,6 +315,10 @@ export async function DELETE(_request: NextRequest, { params }: RouteParams) {
       { status: 500 },
     );
   }
+
+  // Best-effort, matches CLAUDE.md rule 7: a reminder-deactivation failure must never surface as
+  // a failure of the trash action itself, which already succeeded above.
+  await deactivateRemindersForItem(supabase, id);
 
   return NextResponse.json(data);
 }

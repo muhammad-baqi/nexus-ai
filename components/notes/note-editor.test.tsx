@@ -62,6 +62,14 @@ vi.mock("@/components/notes/move-item-control", () => ({
   ),
 }));
 
+// Isolates RemindersPanel's own fetch/render behavior (already covered by
+// reminders-panel.test.tsx) from NoteEditor's own wiring — a real RemindersPanel would otherwise
+// fire its own /api/items/:id/reminders fetch right after the item loads, same reason
+// MoveItemControl is mocked above.
+vi.mock("@/components/reminders/reminders-panel", () => ({
+  RemindersPanel: () => null,
+}));
+
 function jsonResponse(body: unknown, ok = true) {
   return { ok, status: ok ? 200 : 500, json: async () => body };
 }

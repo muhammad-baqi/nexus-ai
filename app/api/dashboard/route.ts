@@ -161,14 +161,29 @@ async function loadStatistics(supabase: SupabaseClient, ownerId: string) {
   }
 }
 
-// Upcoming Reminders (Dashboard.md): per build-order-complete.md step 18, this section
-// deliberately just renders its empty state for now — Reminders/Notifications is a Day 6
-// feature (there's no way to create a reminder yet), and CLAUDE.md's build-discipline rule
-// ("never build ahead of the current day") applies even though the `reminders` table itself
-// already exists from Day 1's schema. Wiring up the real query now would mean shipping
-// untestable, unreachable code — Day 6 gets both the query and its test coverage together.
-function loadUpcomingReminders() {
-  return ok([] as never[]);
+const UPCOMING_REMINDERS_LIMIT = 10;
+
+// Upcoming Reminders (Dashboard.md): active, future-dated reminders soonest-first. A plain
+// PostgREST embedded-select suffices here (unlike Recently Viewed/Recent Collections, which need
+// real aggregation) — RLS on both `reminders` and `knowledge_items` already scopes this to the
+// caller, and `deleted_at is null` is defense-in-depth on top of that (trashing an item already
+// deactivates its reminders — app/api/items/[id]/route.ts's DELETE handler — so this should
+// already be redundant in practice).
+async function loadUpcomingReminders(supabase: SupabaseClient, ownerId: string) {
+  try {
+    const { data, error } = await supabase
+      .from("reminders")
+      .select("id, type, next_fire_at, knowledge_items!inner(id, title, type, owner_id, deleted_at)")
+      .eq("is_active", true)
+      .eq("knowledge_items.owner_id", ownerId)
+      .is("knowledge_items.deleted_at", null)
+      .order("next_fire_at", { ascending: true })
+      .limit(UPCOMING_REMINDERS_LIMIT);
+    if (error) throw error;
+    return ok(data ?? []);
+  } catch (error) {
+    return failed("upcoming_reminders", error);
+  }
 }
 
 // Aggregated Dashboard endpoint (API_Design.md) — every section runs in parallel and is
@@ -187,7 +202,7 @@ export async function GET(_request: NextRequest) {
       loadFavorites(supabase, user.id),
       loadRecentCollections(supabase, user.id),
       loadStatistics(supabase, user.id),
-      Promise.resolve(loadUpcomingReminders()),
+      loadUpcomingReminders(supabase, user.id),
     ]);
 
   return NextResponse.json({

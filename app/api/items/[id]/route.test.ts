@@ -22,6 +22,9 @@ type ResolvedValue = { data: unknown; error: unknown };
 // Supabase call per request.
 let queues: Record<string, ResolvedValue[]>;
 let fromCalls: Record<string, number>;
+// Only populated for the tables tests actually inspect (reminders' deactivate/reactivate calls
+// below) — every other call site here never asserted on `.update()`'s args before this feature.
+let updateCalls: Record<string, unknown[][]>;
 
 function queueResponse(table: string, value: ResolvedValue) {
   (queues[table] ??= []).push(value);
@@ -29,10 +32,14 @@ function queueResponse(table: string, value: ResolvedValue) {
 
 function createQueryBuilder(table: string) {
   const builder: Record<string, unknown> = {};
-  const chainable = ["select", "update", "insert", "upsert", "eq", "is", "order", "limit"];
+  const chainable = ["select", "insert", "upsert", "eq", "is", "order", "limit"];
   for (const method of chainable) {
     builder[method] = vi.fn(() => builder);
   }
+  builder.update = vi.fn((...args: unknown[]) => {
+    (updateCalls[table] ??= []).push(args);
+    return builder;
+  });
   builder.single = vi.fn(() => builder);
   builder.maybeSingle = vi.fn(() => builder);
   builder.then = (resolve: (value: ResolvedValue) => void) => {
@@ -69,6 +76,7 @@ describe("GET /api/items/:id", () => {
     getUser.mockReset();
     signFileUrl.mockReset();
     queues = {};
+    updateCalls = {};
     fromCalls = {};
   });
 
@@ -301,6 +309,7 @@ describe("PATCH /api/items/:id", () => {
     getUser.mockReset();
     queues = {};
     fromCalls = {};
+    updateCalls = {};
     getUser.mockResolvedValue({ data: { user: { id: "user-1" } } });
   });
 
@@ -629,6 +638,7 @@ describe("DELETE /api/items/:id", () => {
     getUser.mockReset();
     queues = {};
     fromCalls = {};
+    updateCalls = {};
     getUser.mockResolvedValue({ data: { user: { id: "user-1" } } });
   });
 
@@ -665,6 +675,19 @@ describe("DELETE /api/items/:id", () => {
 
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ id: VALID_ID });
+  });
+
+  it("deactivates the item's active reminders, marked deactivated_by_trash", async () => {
+    queueResponse("knowledge_items", {
+      data: { id: VALID_ID, deleted_at: "2026-08-03T00:00:00.000Z" },
+      error: null,
+    });
+
+    const response = await DELETE(requestFor("DELETE"), { params });
+
+    expect(response.status).toBe(200);
+    expect(updateCalls.reminders).toHaveLength(1);
+    expect(updateCalls.reminders[0][0]).toEqual({ is_active: false, deactivated_by_trash: true });
   });
 
   it("returns 500 and logs on a delete failure", async () => {

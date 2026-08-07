@@ -14,6 +14,12 @@ vi.mock("@/components/notes/move-item-control", () => ({
   MoveItemControl: () => <div data-testid="move-item-control" />,
 }));
 
+// Same reasoning — a real RemindersPanel fires its own /api/items/:id/reminders fetch on mount
+// (covered by reminders-panel.test.tsx).
+vi.mock("@/components/reminders/reminders-panel", () => ({
+  RemindersPanel: () => null,
+}));
+
 // CodeMirror itself is a well-tested third-party library — this file tests CodeSnippetView's own
 // logic (fetch/edit/save/copy), not CodeMirror's rendering, which jsdom can't meaningfully
 // exercise anyway. Stands in as a plain textarea wired to the same value/onChange/language/

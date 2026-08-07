@@ -707,6 +707,76 @@ consolidated live-browser pass):
 - [x] polls until `status: 'success'`, then renders a Download link
 - [x] polls until `status: 'failed'`, then renders the error with a working Retry button
 
+## Reminders (Day 6)
+
+`lib/reminders/recurrence.test.ts` (new):
+- [x] daily/weekly/monthly happy-path `computeNextFireAt`
+- [x] monthly on the 31st falls back to the 30th in a 30-day month
+- [x] monthly on the 31st falls back to Feb 28 (non-leap) / Feb 29 (leap) in February
+- [x] custom `every_n_days` advances by the configured interval
+- [x] custom `every_weekday` skips Saturday/Sunday
+- [x] `one_time` returns null (no next occurrence)
+
+`app/api/items/[id]/reminders/route.test.ts` (new):
+- [x] POST creates a reminder for each of the 5 types with a correctly-computed `next_fire_at`
+- [x] POST rejects a `one_time` reminder with a past date, inline validation, no row created
+- [x] POST allows a second active reminder on the same item (not one-per-item)
+- [x] GET returns both active and cancelled reminders for the item (history preserved)
+
+`app/api/reminders/[id]/route.test.ts` (new):
+- [x] PATCH changing the time reschedules `next_fire_at` without touching `last_fired_at`
+- [x] DELETE sets `is_active=false`; the row still exists and is still returned by GET
+- [x] PATCH/DELETE 404 for a reminder id belonging to a different owner's item
+
+`app/api/items/[id]/route.test.ts` (extended):
+- [x] DELETE (trash) deactivates the item's active reminders and marks them `deactivated_by_trash`
+
+`app/api/items/[id]/restore/route.test.ts` (extended):
+- [x] restoring reactivates a recurring reminder that was deactivated by trash
+- [x] restoring a `one_time` reminder whose `next_fire_at` has already passed does NOT reactivate it
+- [x] restoring does NOT reactivate a reminder the user had manually cancelled before the item was trashed
+
+`app/api/cron/reminders/route.test.ts` (new):
+- [x] missing or wrong `CRON_SECRET` → 401, no reminders processed
+- [x] claims due reminders via an atomic UPDATE (`claimed_at`) before processing them —
+      self-review-caught: the original SELECT-then-process shape had no claim/lock, so two
+      overlapping cron invocations could both pick up and email the same due reminder
+- [x] a due reminder with the owner's email toggle on: sends via Resend, advances `next_fire_at`
+      (recurring) or deactivates (`one_time`)
+- [x] a due reminder with the owner's email toggle off: no send attempted, still
+      advances/deactivates as if delivered
+- [x] a reminder whose owner has no email on file: logged, skipped, still advances/deactivates
+- [x] a reminder more than 24h past due: not sent, logged as missed, still advances/deactivates
+- [x] a send failure backs off (bumps `failure_count`, clears `claimed_at`) without touching
+      `next_fire_at` or `is_active` — self-review-caught regression fix: an earlier version
+      overwrote `next_fire_at` with a retry time and later chained off of it, permanently
+      shifting the reminder's schedule by the retry delay
+- [x] a reminder that fails 5 times in a row gives up and advances/deactivates anyway
+- [x] one reminder throwing during processing doesn't stop the rest of the batch from processing
+
+`app/api/dashboard/route.test.ts` (extended):
+- [x] upcoming reminders section returns active reminders with their embedded item title/type
+- [x] upcoming reminders section defaults to empty when there are none
+- [ ] upcoming reminders excludes a trashed item's (deactivated) reminders — DB/RLS-level
+      guarantee (the query's own `is("knowledge_items.deleted_at", null)` filter plus trash
+      already deactivating reminders), verified live rather than via the mocked unit test above,
+      same treatment Day 4's "trashed items excluded from search" got
+
+`components/reminders/reminders-panel.test.tsx` (new):
+- [x] creating a daily reminder POSTs the right type-specific schedule shape (server-side coverage
+      for the other 4 types already lives in app/api/items/[id]/reminders/route.test.ts)
+- [x] creating a one-time reminder POSTs `fire_at` as an ISO string
+- [x] cancelling a reminder calls DELETE and removes it from the active list
+- [x] editing a reminder's time calls PATCH and updates the displayed next-fire time
+
+`e2e/reminders.spec.ts` (new, `@smoke`, requires `CRON_SECRET` in the test environment — skips
+itself with a clear reason if unset):
+- [x] create a one-time reminder on a note, a few seconds in the future
+- [x] it appears in Dashboard's Upcoming Reminders
+- [x] triggering the cron route sends it and it disappears from Upcoming Reminders
+- [x] trash the item → its new reminder deactivates
+- [x] restore the item → the reminder reactivates
+
 `components/settings/data-import-form.test.tsx` (new):
 - [x] rejects a file that isn't `.json`/`.zip` client-side, before any upload
 - [x] rejects a file over the size cap client-side, before any upload

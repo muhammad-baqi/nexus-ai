@@ -12,6 +12,7 @@ type ResolvedValue = { data: unknown; error: unknown };
 // several distinct Supabase calls per request (prior-state lookup, verifyCollectionOwnership's
 // check, an optional Inbox lookup, the final update), each needing its own queued response.
 let queues: Record<string, ResolvedValue[]>;
+let updateCalls: Record<string, unknown[][]>;
 
 function queueResponse(table: string, value: ResolvedValue) {
   (queues[table] ??= []).push(value);
@@ -19,10 +20,14 @@ function queueResponse(table: string, value: ResolvedValue) {
 
 function createQueryBuilder(table: string) {
   const builder: Record<string, unknown> = {};
-  const chainable = ["select", "update", "eq", "is", "not", "order", "limit"];
+  const chainable = ["select", "eq", "is", "not", "order", "limit"];
   for (const method of chainable) {
     builder[method] = vi.fn(() => builder);
   }
+  builder.update = vi.fn((...args: unknown[]) => {
+    (updateCalls[table] ??= []).push(args);
+    return builder;
+  });
   builder.single = vi.fn(() => builder);
   builder.maybeSingle = vi.fn(() => builder);
   builder.then = (resolve: (value: ResolvedValue) => void) => {
@@ -54,6 +59,7 @@ describe("POST /api/items/:id/restore", () => {
   beforeEach(() => {
     getUser.mockReset();
     queues = {};
+    updateCalls = {};
     getUser.mockResolvedValue({ data: { user: { id: "user-1" } } });
   });
 
@@ -100,6 +106,66 @@ describe("POST /api/items/:id/restore", () => {
       collection_id: ORIGINAL_COLLECTION_ID,
       rehomed: false,
     });
+  });
+
+  it("reactivates a recurring reminder that was deactivated by trash, recomputing next_fire_at", async () => {
+    queueResponse("knowledge_items", { data: { collection_id: ORIGINAL_COLLECTION_ID }, error: null });
+    queueResponse("collections", { data: { id: ORIGINAL_COLLECTION_ID }, error: null });
+    queueResponse("knowledge_items", {
+      data: { id: VALID_ID, collection_id: ORIGINAL_COLLECTION_ID, deleted_at: null },
+      error: null,
+    });
+    queueResponse("reminders", {
+      data: [{ id: "r1", type: "daily", schedule: { hour: 9, minute: 0 }, next_fire_at: "2020-01-01T09:00:00.000Z" }],
+      error: null,
+    });
+
+    const response = await POST(requestFor(), { params });
+
+    expect(response.status).toBe(200);
+    expect(updateCalls.reminders).toHaveLength(1);
+    const update = updateCalls.reminders[0][0] as { is_active: boolean; deactivated_by_trash: boolean; next_fire_at: string };
+    expect(update.is_active).toBe(true);
+    expect(update.deactivated_by_trash).toBe(false);
+    expect(new Date(update.next_fire_at).getTime()).toBeGreaterThan(Date.now());
+  });
+
+  it("does not reactivate a one_time reminder whose fire time has already passed", async () => {
+    queueResponse("knowledge_items", { data: { collection_id: ORIGINAL_COLLECTION_ID }, error: null });
+    queueResponse("collections", { data: { id: ORIGINAL_COLLECTION_ID }, error: null });
+    queueResponse("knowledge_items", {
+      data: { id: VALID_ID, collection_id: ORIGINAL_COLLECTION_ID, deleted_at: null },
+      error: null,
+    });
+    queueResponse("reminders", {
+      data: [{ id: "r1", type: "one_time", schedule: {}, next_fire_at: "2020-01-01T00:00:00.000Z" }],
+      error: null,
+    });
+
+    const response = await POST(requestFor(), { params });
+
+    expect(response.status).toBe(200);
+    expect(updateCalls.reminders).toHaveLength(1);
+    const update = updateCalls.reminders[0][0] as Record<string, unknown>;
+    expect(update).toEqual({ deactivated_by_trash: false });
+    expect(update).not.toHaveProperty("is_active");
+  });
+
+  it("never touches a reminder the user had already manually cancelled before trashing (deactivated_by_trash=false)", async () => {
+    queueResponse("knowledge_items", { data: { collection_id: ORIGINAL_COLLECTION_ID }, error: null });
+    queueResponse("collections", { data: { id: ORIGINAL_COLLECTION_ID }, error: null });
+    queueResponse("knowledge_items", {
+      data: { id: VALID_ID, collection_id: ORIGINAL_COLLECTION_ID, deleted_at: null },
+      error: null,
+    });
+    // The query itself filters on deactivated_by_trash=true — a manually-cancelled reminder never
+    // matches, so the lookup returns no candidates at all.
+    queueResponse("reminders", { data: [], error: null });
+
+    const response = await POST(requestFor(), { params });
+
+    expect(response.status).toBe(200);
+    expect(updateCalls.reminders ?? []).toHaveLength(0);
   });
 
   it("re-homes into the caller's Inbox and reports rehomed: true when the original collection is trashed/gone", async () => {

@@ -27,17 +27,20 @@ type Favorites = { collections: Collection[]; items: Item[] };
 
 type Statistics = { totalItems: number; totalCollections: number; byType: { type: string; count: number }[] };
 
+type UpcomingReminder = {
+  id: string;
+  type: string;
+  next_fire_at: string;
+  knowledge_items: { id: string; title: string; type: string };
+};
+
 type DashboardData = {
   recentItems: SectionResult<Item[]>;
   recentlyViewed: SectionResult<ViewedItem[]>;
   favorites: SectionResult<Favorites>;
   recentCollections: SectionResult<RecentCollection[]>;
   statistics: SectionResult<Statistics>;
-  // Always empty for now — Reminders/Notifications is a Day 6 feature (see the matching note on
-  // loadUpcomingReminders in app/api/dashboard/route.ts). The shape stays a real SectionResult
-  // (not hardcoded away) so this section still gets real error handling if the backend query
-  // ever fails, and needs no client change once Day 6 starts returning real rows.
-  upcomingReminders: SectionResult<unknown[]>;
+  upcomingReminders: SectionResult<UpcomingReminder[]>;
 };
 
 const TYPE_LABELS: Record<string, string> = {
@@ -269,7 +272,21 @@ export function DashboardView() {
         empty={data.upcomingReminders.data?.length === 0}
         emptyMessage="No upcoming reminders."
       >
-        {null}
+        <ul className="flex flex-col gap-1.5">
+          {data.upcomingReminders.data?.map((reminder) => (
+            <li key={reminder.id} className="flex items-center justify-between gap-2 text-sm">
+              <Link href={`/items/${reminder.knowledge_items.id}`} className="truncate hover:underline">
+                {reminder.knowledge_items.title || "Untitled"}
+                <span className="text-muted-foreground ml-1.5 text-xs">
+                  {TYPE_LABELS[reminder.knowledge_items.type] ?? reminder.knowledge_items.type}
+                </span>
+              </Link>
+              <span className="text-muted-foreground shrink-0 text-xs">
+                {new Date(reminder.next_fire_at).toLocaleString()}
+              </span>
+            </li>
+          ))}
+        </ul>
       </SectionShell>
     </div>
   );

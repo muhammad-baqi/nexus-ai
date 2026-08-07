@@ -16,6 +16,12 @@ vi.mock("@/components/notes/move-item-control", () => ({
   MoveItemControl: () => <div data-testid="move-item-control" />,
 }));
 
+// Same reasoning — a real RemindersPanel fires its own /api/items/:id/reminders fetch on mount
+// (covered by reminders-panel.test.tsx).
+vi.mock("@/components/reminders/reminders-panel", () => ({
+  RemindersPanel: () => null,
+}));
+
 function jsonResponse(body: unknown, ok = true) {
   return { ok, status: ok ? 200 : 500, json: async () => body };
 }

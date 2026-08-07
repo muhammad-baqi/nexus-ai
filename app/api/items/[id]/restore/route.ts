@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 
+import { reactivateRemindersForItem } from "@/lib/items/reminders";
 import { verifyCollectionOwnership } from "@/lib/items/verify-collection-ownership";
 import { requireUser } from "@/lib/supabase/require-user";
 import { createClient } from "@/lib/supabase/server";
@@ -152,6 +153,10 @@ export async function POST(_request: NextRequest, { params }: RouteParams) {
       { status: 500 },
     );
   }
+
+  // Best-effort, matches CLAUDE.md rule 7: a reminder-reactivation failure must never surface as
+  // a failure of the restore action itself, which already succeeded above.
+  await reactivateRemindersForItem(supabase, id);
 
   return NextResponse.json({ ...data, rehomed, rehomedToCollectionName });
 }

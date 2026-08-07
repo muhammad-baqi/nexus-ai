@@ -81,6 +81,12 @@ describe("GET /api/dashboard", () => {
     tableQueues.knowledge_items = [
       { data: [{ id: "item-3", collection_id: "col-1", type: "note", title: "Favorited note", updated_at: "t" }], error: null },
     ];
+    tableQueues.reminders = [
+      {
+        data: [{ id: "rem-1", type: "daily", next_fire_at: "t", knowledge_items: { id: "item-4", title: "Follow up", type: "note" } }],
+        error: null,
+      },
+    ];
 
     const response = await GET(requestFor());
     const body = await response.json();
@@ -100,6 +106,25 @@ describe("GET /api/dashboard", () => {
       data: { totalItems: 5, totalCollections: 3, byType: [{ type: "note", count: 5 }] },
       error: null,
     });
+    expect(body.upcomingReminders).toEqual({
+      data: [{ id: "rem-1", type: "daily", next_fire_at: "t", knowledge_items: { id: "item-4", title: "Follow up", type: "note" } }],
+      error: null,
+    });
+  });
+
+  it("upcoming reminders section defaults to empty when there are none", async () => {
+    getUser.mockResolvedValue({ data: { user: { id: "user-1" } } });
+    rpcResults.search_knowledge_items = { data: [], error: null };
+    rpcResults.dashboard_recently_viewed = { data: [], error: null };
+    rpcResults.dashboard_recent_collections = { data: [], error: null };
+    rpcResults.dashboard_item_type_counts = { data: [], error: null };
+    tableQueues.collections = [{ data: [], error: null }, { data: null, error: null, count: 0 }];
+    tableQueues.knowledge_items = [{ data: [], error: null }];
+    tableQueues.reminders = [{ data: [], error: null }];
+
+    const response = await GET(requestFor());
+    const body = await response.json();
+
     expect(body.upcomingReminders).toEqual({ data: [], error: null });
   });
 

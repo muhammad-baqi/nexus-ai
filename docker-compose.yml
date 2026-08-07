@@ -46,6 +46,10 @@ services:
       # local Supabase — sidesteps both problems.
       - BASE_URL=http://host.docker.internal:3000
       - MAILPIT_URL=http://host.docker.internal:54324
+    # e2e/reminders.spec.ts drives /api/cron/reminders directly (Vercel Cron doesn't run in this
+    # environment) and needs the same CRON_SECRET value the app service authenticates against.
+    env_file:
+      - .env.local
     entrypoint: ["npx", "playwright", "test"]
     profiles: ["test"]   # run with: docker compose --profile test run playwright
 
