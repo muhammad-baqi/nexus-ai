@@ -11,6 +11,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { MoveItemControl } from "@/components/notes/move-item-control";
 import { TagInput, type ItemTag } from "@/components/notes/tag-input";
 import { RemindersPanel } from "@/components/reminders/reminders-panel";
+import { ShareControl } from "@/components/sharing/share-control";
 import { formatBytes } from "@/lib/format/format-bytes";
 import { isTextPreviewable } from "@/lib/files/constants";
 
@@ -325,6 +326,7 @@ export function FileItemView({ itemId }: Props) {
       <TagInput itemId={itemId} tags={item.tags} onTagsChange={handleTagsChange} />
       <MoveItemControl itemId={itemId} currentCollectionId={item.collection_id} onMoved={handleMoved} />
       <RemindersPanel itemId={itemId} />
+      <ShareControl itemId={itemId} />
 
       {mode === "edit" && (
         <div className="flex flex-col gap-1.5">

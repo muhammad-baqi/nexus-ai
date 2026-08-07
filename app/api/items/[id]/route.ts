@@ -3,6 +3,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { fetchCodeSnippetData } from "@/lib/items/code-snippet";
 import { fetchFileAsset } from "@/lib/items/file-asset";
 import { deactivateRemindersForItem } from "@/lib/items/reminders";
+import { fetchActiveShareLink } from "@/lib/items/share-link";
 import { fetchItemTags } from "@/lib/items/tags";
 import { verifyCollectionOwnership } from "@/lib/items/verify-collection-ownership";
 import { fetchWebsiteMetadata } from "@/lib/items/website-metadata";
@@ -83,10 +84,12 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
       : undefined;
   const code_snippet_data =
     data.type === "code_snippet" ? await fetchCodeSnippetData(supabase, id) : undefined;
+  const share_link = await fetchActiveShareLink(supabase, id);
 
   return NextResponse.json({
     ...data,
     tags,
+    share_link,
     ...(website_metadata !== undefined && { website_metadata }),
     ...(file_asset !== undefined && { file_asset }),
     ...(code_snippet_data !== undefined && { code_snippet_data }),

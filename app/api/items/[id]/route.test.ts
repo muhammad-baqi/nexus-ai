@@ -118,6 +118,7 @@ describe("GET /api/items/:id", () => {
       title: "Trip planning",
       description: "Packing list",
       tags: [],
+      share_link: null,
     });
   });
 

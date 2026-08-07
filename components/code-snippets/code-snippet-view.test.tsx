@@ -20,6 +20,11 @@ vi.mock("@/components/reminders/reminders-panel", () => ({
   RemindersPanel: () => null,
 }));
 
+// Same reasoning — a real ShareControl fires its own GET /api/items/:id fetch on mount.
+vi.mock("@/components/sharing/share-control", () => ({
+  ShareControl: () => null,
+}));
+
 // CodeMirror itself is a well-tested third-party library — this file tests CodeSnippetView's own
 // logic (fetch/edit/save/copy), not CodeMirror's rendering, which jsdom can't meaningfully
 // exercise anyway. Stands in as a plain textarea wired to the same value/onChange/language/

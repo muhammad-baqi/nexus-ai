@@ -70,6 +70,11 @@ vi.mock("@/components/reminders/reminders-panel", () => ({
   RemindersPanel: () => null,
 }));
 
+// Same reasoning — a real ShareControl fires its own GET /api/items/:id fetch on mount.
+vi.mock("@/components/sharing/share-control", () => ({
+  ShareControl: () => null,
+}));
+
 function jsonResponse(body: unknown, ok = true) {
   return { ok, status: ok ? 200 : 500, json: async () => body };
 }

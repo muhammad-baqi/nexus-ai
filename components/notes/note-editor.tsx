@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { MoveItemControl } from "@/components/notes/move-item-control";
 import { RemindersPanel } from "@/components/reminders/reminders-panel";
+import { ShareControl } from "@/components/sharing/share-control";
 import { NoteBody } from "@/components/notes/note-body";
 import { NoteRichTextEditor } from "@/components/notes/note-rich-text-editor";
 import { NoteVersionHistory } from "@/components/notes/note-version-history";
@@ -348,6 +349,7 @@ export function NoteEditor({ itemId }: Props) {
           onMoved={handleMoved}
         />
         <RemindersPanel itemId={itemId} />
+        <ShareControl itemId={itemId} />
         <div className="flex flex-col gap-1.5">
           <div className="flex items-center justify-between">
             <Label htmlFor="note-body">Body</Label>
@@ -502,6 +504,7 @@ export function NoteEditor({ itemId }: Props) {
         onMoved={handleMoved}
       />
       <RemindersPanel itemId={itemId} />
+        <ShareControl itemId={itemId} />
       {statusIndicator}
       {toggleError && (
         <p className="text-destructive text-sm" role="alert">
