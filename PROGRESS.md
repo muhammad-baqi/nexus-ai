@@ -20,6 +20,53 @@ per-feature — except where self-review surfaces a real bug whose fix specifica
 proof (see Code Snippets below), in which case that one spec is run immediately rather than
 deferred. Unit/integration/component tests, typecheck, and lint remain per-feature, unchanged.
 
+**2026-08-07 — Day 6 Sharing — public view-only links shipped**
+(build-order-complete.md #26), squash-merged into `develop`. Day 6 is now 10/14. **Per explicit
+user instruction this round, testing scope was deliberately reduced** — unit coverage only (the
+token generator plus both route handlers, including the two actually security-relevant cases: a
+revoked/nonexistent token and a trashed item behind an otherwise-valid link), no e2e spec, no
+live-browser verification. Flagged here as a real gap, not silently skipped.
+
+No new migration — `share_links` (+ RLS, owner-scoped transitively through `knowledge_item_id`)
+already existed from `001_initial_schema.sql`. New `lib/sharing/generate-token.ts`
+(`crypto.randomBytes(24).toString("base64url")`, 192 bits of entropy). `POST`/`DELETE
+/api/items/:id/share` (idempotent create — an already-shared item returns its existing active
+link rather than creating a duplicate; revoke is a **soft** `is_active=false`, matching Reminders'
+cancel-not-delete precedent, so "a new link (different token) can be generated afterward" per
+`Knowledge_Items.md` always means a fresh row, never reactivating an old one). `GET
+/api/share/:token` (new `app/api/share/[token]/route.ts`) is genuinely public — no
+`requireUser`, using `lib/supabase/admin.ts`'s service-role client since there's no session at
+all here (the same legitimate RLS-bypass case the Reminders scheduler already established, not a
+new pattern). A trashed item behind a still-active link returns "this item is no longer
+available" (`Knowledge_Items.md`'s Error States section calls for exactly this, not a raw 404);
+an invalid/revoked token 404s with a distinct message. The response body is deliberately narrow —
+title/description/type + type-specific content only, never tags, collection, or owner info.
+New public page `app/share/[token]/page.tsx` (outside the `(app)` route group, same as
+`login`/`register` — no nav chrome, no auth) + `components/sharing/shared-item-view.tsx`, a
+read-only per-type renderer reusing `NoteBody` (notes) and `CodeEditor readOnly` (snippets)
+rather than duplicating their rendering logic. `GET /api/items/:id` now embeds `share_link`
+(new `lib/items/share-link.ts`, mirrors `fetchWebsiteMetadata`'s shape) so the new
+`components/sharing/share-control.tsx` — embedded in all 4 item-view components next to
+`RemindersPanel` — can show current share state without a separate, undocumented GET endpoint
+(`API_Design.md` only lists `POST`/`DELETE` for `/api/items/:id/share`).
+
+Adding `ShareControl` to all 4 item-view components broke the same 4 existing component test
+files' fetch-mock call-count assumptions `RemindersPanel` did the session before — fixed the same
+way, mocking `ShareControl` out in each, matching the established `MoveItemControl` precedent.
+805/805 unit/integration/component tests green (12 new), typecheck clean, lint clean (one new
+`react-hooks/set-state-in-effect` instance on `ShareControl`'s mount-fetch effect, the same
+pre-existing accepted pattern now used by 7 files in this codebase).
+
+**Not verified this session (manual retest needed, more so than usual per the reduced scope
+above):** no live-browser pass at all for this feature — the actual public `/share/:token` page
+render (per type: note/website/pdf/image/file/code_snippet), the Share/Copy/Revoke UI flow, and a
+second real account confirming a share link exposes *only* that one item's content and nothing
+else reachable from it, were none of them driven through a real browser this session. Given this
+is the one feature this session whose entire point is "safe to expose publicly," this is worth
+prioritizing before Day 6 is called release-ready — recommend at minimum a manual click-through
+of generate → open in an incognito window → revoke → confirm the old link 404s, before promoting
+past staging.
+
 **2026-08-07 — Day 6 Reminders — full notification system shipped**
 (build-order-complete.md #25), squash-merged into `develop`. Day 6 is now 9/14. The first real
 use of the previously-installed-but-unused `resend` dependency, and the first Vercel Cron job in
@@ -1371,7 +1418,8 @@ CLI commands don't default to prod.
 - [x] Reminders — email delivery via background scheduler, missed-reminder catch-up — see the
   2026-08-07 entry above.
 - [x] Reminders — deactivate on trash, reactivate on restore — see the 2026-08-07 entry above.
-- [ ] Sharing — public view-only share link per Knowledge Item (generate/revoke)
+- [x] Sharing — public view-only share link per Knowledge Item (generate/revoke) — see the
+  2026-08-07 entry above.
 - [ ] Activity log (created/edited/deleted/restored/shared events)
 - [ ] Accessibility pass — keyboard nav, ARIA labeling, WCAG AA contrast (both themes)
 - [ ] Error/empty states pass across all surfaces
