@@ -20,6 +20,109 @@ per-feature — except where self-review surfaces a real bug whose fix specifica
 proof (see Code Snippets below), in which case that one spec is run immediately rather than
 deferred. Unit/integration/component tests, typecheck, and lint remain per-feature, unchanged.
 
+**2026-08-07 — Day 6 Reminders — full notification system shipped**
+(build-order-complete.md #25), squash-merged into `develop`. Day 6 is now 9/14. The first real
+use of the previously-installed-but-unused `resend` dependency, and the first Vercel Cron job in
+this repo.
+
+New `supabase/migrations/010_reminders.sql` extends the existing `reminders` table (RLS already
+covered every column, transitively through `knowledge_item_id`, from `001_initial_schema.sql`)
+with three scheduler bookkeeping columns: `deactivated_by_trash` (distinguishes "auto-deactivated
+because its item was trashed" from "the user manually cancelled this reminder" — restore only
+ever reactivates the former), `last_fired_at`, and `claimed_at` (added mid-feature by self-review,
+see below). `schedule` (already `jsonb`) holds type-specific fields — `{hour, minute}` plus
+`dayOfWeek`/`dayOfMonth`/`kind`+`intervalDays` as applicable — all evaluated in UTC (no timezone
+field exists anywhere in this schema, a documented scope decision, not an oversight).
+`lib/reminders/recurrence.ts`'s `computeNextFireAt()` is the one place recurrence math lives:
+daily/weekly/monthly (clamping day-of-month to the target month's real last day for the
+day-31-in-a-30-day-month case) and two concrete "custom" forms — every-N-days and every-weekday —
+matching the exact examples `Notifications.md` itself names, not a general RRULE parser.
+
+New `GET`/`POST /api/items/:id/reminders` and `PATCH`/`DELETE /api/reminders/:id` (the latter a
+**soft** cancel — `is_active=false`, row preserved, per "deactivates... without deleting its
+history"). `app/api/items/:id`'s `DELETE` (trash) and `.../restore` now call
+`lib/items/reminders.ts`'s `deactivateRemindersForItem`/`reactivateRemindersForItem` — restore
+only reactivates rows this app itself deactivated via trash (`deactivated_by_trash=true`),
+recomputing `next_fire_at` for recurring types and only reactivating a `one_time` reminder if its
+stored fire time is still in the future. New `GET /api/cron/reminders` — the actual scheduler,
+protected by a `CRON_SECRET` bearer-token check, using `lib/supabase/admin.ts`'s pre-existing
+service-role client (the one legitimate new call site for it, since dispatch is inherently
+cross-user in a single tick). Per due reminder: skip-and-log if more than 24h late ("missed," per
+the spec's grace period), skip the send but still advance if the owner's `notification_email_enabled`
+toggle is off (Dashboard stays the fallback surface), otherwise send via
+`lib/email/send-reminder-email.ts` (HTML-escapes user-supplied title/description before
+interpolating into the email body) with failure-count-based backoff, giving up after 5 consecutive
+failures rather than wedging a recurring reminder forever. New `components/reminders/
+reminders-panel.tsx` (create/edit/cancel, embedded in all 4 item-view components next to the
+existing `TagInput`/`MoveItemControl` row) and a real `GET /api/dashboard` Upcoming Reminders
+query (previously a stubbed `ok([])` deferred here from Day 4). New `vercel.json` (cron schedule
+`* * * * *`, matching `.claude/docs/infrastructure.md`'s documented design) — flagged, not fixed:
+Vercel's Hobby plan (this project's tier) caps cron frequency below once-per-minute in practice;
+the scheduler's own 24h grace-period catch-up is the deliberate mitigation, so a reminder still
+fires (just later than its exact scheduled minute) as long as the cron runs at least once within
+24h of it coming due.
+
+Self-review (`code-reviewer` subagent) caught two real bugs in the scheduler, both fixed: (1) the
+backoff-on-failure path overwrote `next_fire_at` with the retry time, and the later successful
+send's `resolvedUpdate()` chained the *next* occurrence off of that shifted value instead of the
+original anchor — a daily 9am reminder that failed once and backed off 2 minutes would
+permanently become a 9:02am reminder going forward. Fixed by leaving `next_fire_at` untouched
+during backoff (only `failure_count` changes) — the row simply gets reprocessed on the scheduler's
+next run, which is itself a real backoff given the Hobby-tier cron-frequency cap noted above. (2)
+No claim/lock existed before processing due reminders — a plain SELECT-then-loop-of-UPDATEs, so
+two overlapping cron invocations (a slow tick still running when the next one fires, or a manual
+trigger racing the scheduled one) could both select and email the same due reminder. Fixed with
+the new `claimed_at` column and an atomic claim step: a single `UPDATE ... RETURNING` (PostgREST
+issues `.update().select()` as one SQL statement) claims all due, unclaimed-or-stale-claimed rows
+before processing — Postgres's own row-level locking means only one overlapping invocation
+actually claims each row. Self-review also flagged (fixed) a `test-cases.md` splice bug from this
+feature's own editing (a Data Export test-case bullet had been orphaned into the middle of the new
+Reminders section) and (left as a documented, unreachable-today edge case) that `PATCH
+/api/reminders/:id` doesn't block editing a cancelled reminder's schedule — the UI never exposes
+this since cancelled reminders are edit-locked in `reminders-panel.tsx`.
+
+793/793 unit/integration/component tests green (57 new, up from 736: `lib/reminders/recurrence.test.ts` — 17
+cases covering every recurrence type plus the month-end-fallback edge cases in both a 30-day month
+and February leap/non-leap — the reminders CRUD routes, the extended trash/restore route tests,
+11 scheduler tests covering every outcome branch including the claim step and the backoff-drift
+regression, the extended dashboard route test, and `reminders-panel.test.tsx`), typecheck clean,
+lint clean (one new `react-hooks/set-state-in-effect` instance on `RemindersPanel`'s mount-fetch
+effect — the same pre-existing, already-accepted pattern now used by 6 files in this codebase, not
+newly introduced as an anti-pattern). Adding `RemindersPanel` to all 4 item-view components broke
+3 existing component test files' fetch-mock call-count assumptions (a real, if unglamorous, find
+mid-session, not self-review) — fixed by mocking `RemindersPanel` out in
+`note-editor.test.tsx`/`bookmark-view.test.tsx`/`file-item-view.test.tsx`/`code-snippet-view.test.tsx`,
+matching the exact precedent those files already established for `MoveItemControl`.
+
+New `e2e/reminders.spec.ts` (`@smoke`) written **and run this session** via the dockerized
+`playwright` service: register → turn the "Reminder emails" toggle off first (deliberately — this
+makes the scheduler resolve deterministically via the toggle-off path regardless of whether a real
+`RESEND_API_KEY` is configured, which it isn't in any environment yet; this repo still has no
+actual Resend account wired up, so a real send would always fail here and the spec shouldn't be
+flaky/gated on third-party credentials it doesn't need) → create a note → attach a one-time
+reminder → confirm it's on Dashboard's Upcoming Reminders → trigger `/api/cron/reminders` directly
+with the real `CRON_SECRET` (Vercel Cron doesn't run in this environment) → confirm it disappears
+→ trash the item → restore it → confirm a newly-added daily reminder survives the round-trip. Two
+real bugs surfaced writing this spec (not self-review, and not app bugs — both in the spec
+itself): `<input type="datetime-local">` has minute granularity, so a flat 30s buffer intermittently
+lost up to 59s to truncation-toward-the-past once the browser re-parsed the value, occasionally
+failing the past-date validation; fixed with a 90s buffer. And the Dashboard legitimately lists the
+same item title in both Recent Items and Upcoming Reminders, needing the same
+`.locator("..")`-from-heading section-scoping `e2e/dashboard.spec.ts` already established. Also
+confirmed live: `docker-compose.yml`'s `playwright` service needed its own `env_file: .env.local`
+added (it previously only had a few explicit `environment:` entries) — `CRON_SECRET` must reach
+the test-runner process itself, not just the app container, to drive the scheduler route directly.
+
+**Not verified this session (manual retest needed):** real email delivery — no `RESEND_API_KEY`
+exists in any environment for this project yet (a human action, `RESEND_FROM`/`CRON_SECRET` were
+added to local `.env.local` this session but not a real Resend account); `sendReminderEmail`'s
+graceful no-key degradation path is what's actually exercised end-to-end here, not a real send.
+Before staging/prod reminder emails work: create a Resend account, set `RESEND_API_KEY`/
+`RESEND_FROM` + a generated `CRON_SECRET` value in both Vercel projects' env vars (per
+`.claude/docs/infrastructure.md`'s existing instructions), and confirm `vercel.json`'s cron
+actually fires on the deployed Hobby-tier plan (or accept its likely-reduced real frequency, per
+the grace-period mitigation noted above).
+
 **2026-08-06 — session paused cleanly at end of day.** Day 6 is now 6/14 (Settings — full polish +
 Data Export/Import, below, shipped and squash-merged into `develop` this session; Day 5 was already
 code-complete going in). Local Supabase (`npx supabase stop`) and Docker (`docker compose down`)
@@ -1263,9 +1366,11 @@ CLI commands don't default to prod.
   oversight.
 - [x] Settings — data import (JSON / Markdown, background job + summary) — see the 2026-08-06 entry
   above.
-- [ ] Reminders — one-time, daily, weekly, monthly, custom recurrence
-- [ ] Reminders — email delivery via background scheduler, missed-reminder catch-up
-- [ ] Reminders — deactivate on trash, reactivate on restore
+- [x] Reminders — one-time, daily, weekly, monthly, custom recurrence — see the 2026-08-07 entry
+  above.
+- [x] Reminders — email delivery via background scheduler, missed-reminder catch-up — see the
+  2026-08-07 entry above.
+- [x] Reminders — deactivate on trash, reactivate on restore — see the 2026-08-07 entry above.
 - [ ] Sharing — public view-only share link per Knowledge Item (generate/revoke)
 - [ ] Activity log (created/edited/deleted/restored/shared events)
 - [ ] Accessibility pass — keyboard nav, ARIA labeling, WCAG AA contrast (both themes)
