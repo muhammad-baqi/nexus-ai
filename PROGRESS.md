@@ -20,6 +20,48 @@ per-feature — except where self-review surfaces a real bug whose fix specifica
 proof (see Code Snippets below), in which case that one spec is run immediately rather than
 deferred. Unit/integration/component tests, typecheck, and lint remain per-feature, unchanged.
 
+**2026-08-07 — Day 6 Activity Log shipped** (build-order-complete.md #27, Activity Log portion
+only), squash-merged into `develop`. Day 6 is now 11/14. **Scope note, per explicit user
+instruction this round:** #27's original prompt bundles three things — Activity Log, a full
+accessibility pass, and an error/empty-state sweep. Only Activity Log shipped this round; the
+other two are deliberately deferred to #28's QA gate rather than done piecemeal now (see #28's
+own checklist entries below, still unchecked). Same reduced-testing-scope instruction as Sharing:
+unit coverage only, no e2e/live-browser pass.
+
+No new migration — `activity_log` (+ RLS, owner-scoped) already existed from
+`001_initial_schema.sql`. New `lib/activity/log-activity.ts` — a best-effort insert (never
+throws, CLAUDE.md rule 7) — wired into the success path of every existing item/collection
+create/edit/trash/restore/share mutation (`POST /api/items` ×4 create branches, `PATCH`/`DELETE
+/api/items/:id`, `POST /api/items/:id/restore`, the new-link branch of `POST
+/api/items/:id/share`, and the collections equivalents). New `GET /api/activity` (paginated,
+most-recent-first, embeds each row's current item/collection title/name — a target since
+permanently deleted just shows the action with no link, since `activity_log`'s FKs are `on delete
+set null`) + `components/activity/activity-view.tsx` + `app/(app)/activity/page.tsx` + an
+"Activity" link in `components/layout/app-nav.tsx`.
+
+**Known, documented simplification, not a bug:** `PATCH /api/items/:id` logs `"edited"` on every
+successful PATCH, including each autosave debounce tick — a single note-editing session can log
+several "edited" rows rather than one per meaningful edit. Matches this round's "move fast" scope;
+worth revisiting (e.g. debounce the log write itself, or only log on `Done`/session-end) before
+this is relied on as a genuinely readable timeline rather than a raw event log.
+
+Wiring `logActivity` into 7 existing mutation routes broke 4 of those routes' own existing tests
+— not self-review, just the mechanical consequence of adding a real DB call their mocked query
+builders didn't model (`app/api/collections/[id]/route.test.ts`,
+`app/api/collections/[id]/restore/route.test.ts`, `app/api/items/[id]/restore/route.test.ts`,
+`app/api/items/[id]/share/route.test.ts`) — fixed by mocking `logActivity` out in each (or adding
+a generic `insert` stub where the route under test never asserts on it), isolating it the same
+way `RemindersPanel`/`ShareControl` were mocked out of the item-view component tests in the
+previous two features. 810/810 unit/integration/component tests green (5 new, up from 805: 2 for
+`logActivity` itself, 3 for the new `GET /api/activity` route — `app-nav.test.tsx`'s existing
+test was extended in place, not a new case), typecheck clean, lint clean (one new
+`react-hooks/set-state-in-effect` instance on `ActivityView`'s mount-fetch effect, the same
+accepted pattern now in 8 files).
+
+**Not verified this session:** no live-browser pass — the actual `/activity` page render, and
+whether the timeline reads sensibly at real usage volume (given the autosave-spam caveat above),
+were not driven through a real browser.
+
 **2026-08-07 — Day 6 Sharing — public view-only links shipped**
 (build-order-complete.md #26), squash-merged into `develop`. Day 6 is now 10/14. **Per explicit
 user instruction this round, testing scope was deliberately reduced** — unit coverage only (the
@@ -1420,7 +1462,10 @@ CLI commands don't default to prod.
 - [x] Reminders — deactivate on trash, reactivate on restore — see the 2026-08-07 entry above.
 - [x] Sharing — public view-only share link per Knowledge Item (generate/revoke) — see the
   2026-08-07 entry above.
-- [ ] Activity log (created/edited/deleted/restored/shared events)
+- [x] Activity log (created/edited/deleted/restored/shared events) — see the 2026-08-07 entry
+  above. The accessibility pass and error/empty-state sweep originally bundled into this same
+  build-order-complete.md #27 step are deliberately deferred to #28's QA gate (explicit user
+  instruction this session) — not done yet, tracked separately below.
 - [ ] Accessibility pass — keyboard nav, ARIA labeling, WCAG AA contrast (both themes)
 - [ ] Error/empty states pass across all surfaces
 - [ ] Full Playwright regression + Lighthouse performance/accessibility audit
