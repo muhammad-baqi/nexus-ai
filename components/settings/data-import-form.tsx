@@ -2,10 +2,16 @@
 
 import { useEffect, useRef, useState, type ChangeEvent } from "react";
 
+import { Button } from "@/components/ui/button";
 import { DATA_JOBS_STORAGE_BUCKET, IMPORT_SOURCE_MAX_BYTES } from "@/lib/settings/constants";
 import { createClient } from "@/lib/supabase/client";
 
 const POLL_INTERVAL_MS = 2000;
+
+// A failed poll request (transient network blip) is retried up to this many times before the
+// job surfaces an inline error — previously a single failed request permanently froze the job
+// at "Importing…" forever, with no retry and no visible error.
+const MAX_POLL_FAILURES = 5;
 
 type SourceFormat = "json" | "markdown";
 type JobStatus = "pending" | "processing" | "success" | "failed";
@@ -17,6 +23,7 @@ type ImportJob = {
   created_count: number;
   skipped_count: number;
   skip_reasons: string[];
+  pollFailed?: boolean;
 };
 
 function sourceFormatFor(file: File): SourceFormat | null {
@@ -35,19 +42,35 @@ export function DataImportForm() {
   const [error, setError] = useState<string | undefined>();
   const [isUploading, setIsUploading] = useState(false);
   const pollTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const pollFailureCount = useRef(0);
 
   useEffect(() => () => clearTimeout(pollTimer.current), []);
 
   async function poll(jobId: string) {
     const response = await fetch(`/api/settings/import/${jobId}`);
-    if (!response.ok) return;
+    if (!response.ok) {
+      pollFailureCount.current += 1;
+      if (pollFailureCount.current < MAX_POLL_FAILURES) {
+        pollTimer.current = setTimeout(() => poll(jobId), POLL_INTERVAL_MS);
+      } else {
+        setJob((prev) => (prev ? { ...prev, pollFailed: true } : prev));
+      }
+      return;
+    }
 
+    pollFailureCount.current = 0;
     const latest: ImportJob = await response.json();
-    setJob(latest);
+    setJob({ ...latest, pollFailed: false });
 
     if (latest.status === "pending" || latest.status === "processing") {
       pollTimer.current = setTimeout(() => poll(jobId), POLL_INTERVAL_MS);
     }
+  }
+
+  function retryPoll(jobId: string) {
+    pollFailureCount.current = 0;
+    setJob((prev) => (prev ? { ...prev, pollFailed: false } : prev));
+    poll(jobId);
   }
 
   async function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
@@ -109,6 +132,7 @@ export function DataImportForm() {
     }
 
     const created: { id: string; status: JobStatus } = await response.json();
+    pollFailureCount.current = 0;
     setJob({ id: created.id, status: created.status, error_message: null, created_count: 0, skipped_count: 0, skip_reasons: [] });
     pollTimer.current = setTimeout(() => poll(created.id), POLL_INTERVAL_MS);
   }
@@ -137,11 +161,22 @@ export function DataImportForm() {
         </p>
       )}
 
-      {job && (job.status === "pending" || job.status === "processing") && (
-        <p className="text-muted-foreground text-sm" role="status">
-          Importing…
-        </p>
-      )}
+      {job &&
+        (job.status === "pending" || job.status === "processing") &&
+        (job.pollFailed ? (
+          <p className="flex items-center gap-2 text-sm">
+            <span className="text-destructive" role="alert">
+              Couldn&apos;t check import status.
+            </span>
+            <Button type="button" variant="outline" size="sm" onClick={() => retryPoll(job.id)}>
+              Retry
+            </Button>
+          </p>
+        ) : (
+          <p className="text-muted-foreground text-sm" role="status">
+            Importing…
+          </p>
+        ))}
       {job?.status === "failed" && (
         <p className="text-destructive text-sm" role="alert">
           {job.error_message ?? "Import failed."}

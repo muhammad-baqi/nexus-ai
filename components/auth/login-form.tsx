@@ -100,8 +100,13 @@ export function LoginForm() {
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           aria-invalid={!!fieldErrors.email}
+          aria-describedby={fieldErrors.email ? "email-error" : undefined}
         />
-        {fieldErrors.email && <p className="text-destructive text-sm">{fieldErrors.email}</p>}
+        {fieldErrors.email && (
+          <p id="email-error" role="alert" className="text-destructive text-sm">
+            {fieldErrors.email}
+          </p>
+        )}
       </div>
 
       <div className="flex flex-col gap-1.5">
@@ -113,9 +118,12 @@ export function LoginForm() {
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           aria-invalid={!!fieldErrors.password}
+          aria-describedby={fieldErrors.password ? "password-error" : undefined}
         />
         {fieldErrors.password && (
-          <p className="text-destructive text-sm">{fieldErrors.password}</p>
+          <p id="password-error" role="alert" className="text-destructive text-sm">
+            {fieldErrors.password}
+          </p>
         )}
         <Link href="/forgot-password" className="text-sm font-medium underline self-start">
           Forgot password?

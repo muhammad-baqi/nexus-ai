@@ -135,6 +135,33 @@ describe("NoteRichTextEditor", () => {
     expect(lastMarkdown(onChange)).toBe("[hello world](https://example.com)");
   });
 
+  it("pressing Escape while the Link URL form is open closes it without inserting a link", async () => {
+    const { editor, onChange } = await renderEditor("hello world");
+
+    act(() => {
+      editor.commands.selectAll();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Link" }));
+    expect(screen.getByLabelText("Link URL")).toBeInTheDocument();
+
+    fireEvent.keyDown(screen.getByLabelText("Link URL"), { key: "Escape" });
+
+    expect(screen.queryByLabelText("Link URL")).not.toBeInTheDocument();
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("pressing Escape while the Image URL form is open closes it without inserting an image", async () => {
+    const { onChange } = await renderEditor("");
+
+    fireEvent.click(screen.getByRole("button", { name: "Image" }));
+    expect(screen.getByLabelText("Image URL")).toBeInTheDocument();
+
+    fireEvent.keyDown(screen.getByLabelText("Image URL"), { key: "Escape" });
+
+    expect(screen.queryByLabelText("Image URL")).not.toBeInTheDocument();
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
   it("the Image form inserts a Markdown image for an http(s) URL, and does nothing for a javascript: URL", async () => {
     const { onChange } = await renderEditor("");
 

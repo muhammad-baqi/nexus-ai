@@ -47,6 +47,15 @@ describe("LoginForm", () => {
     expect(signInWithPassword).not.toHaveBeenCalled();
   });
 
+  it("announces the invalid-email field error via role=alert, linked to the input via aria-describedby", async () => {
+    render(<LoginForm />);
+    await fillForm("not-an-email", "somepassword");
+
+    const error = await screen.findByRole("alert");
+    expect(error).toHaveTextContent(/enter a valid email address/i);
+    expect(screen.getByLabelText("Email")).toHaveAttribute("aria-describedby", error.id);
+  });
+
   it("shows 'Invalid email or password' inline on invalid_credentials and stays on the login form", async () => {
     signInWithPassword.mockResolvedValue({
       data: {},

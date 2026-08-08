@@ -9,6 +9,11 @@ import { Button } from "@/components/ui/button";
 // quickly for a personal-knowledge-hub-scale export.
 const POLL_INTERVAL_MS = 2000;
 
+// A failed poll request (transient network blip) is retried up to this many times before the
+// job's row surfaces an inline error — previously a single failed request permanently froze
+// that job at "Generating…" forever, with no retry and no visible error.
+const MAX_POLL_FAILURES = 5;
+
 const FORMATS = [
   { value: "markdown", label: "Markdown" },
   { value: "json", label: "JSON" },
@@ -24,12 +29,14 @@ type ExportJob = {
   status: JobStatus;
   error_message: string | null;
   download_url: string | null;
+  pollFailed?: boolean;
 };
 
 export function DataExportForm() {
   const [jobs, setJobs] = useState<ExportJob[]>([]);
   const [startError, setStartError] = useState<string | undefined>();
   const pollTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  const pollFailureCounts = useRef<Map<string, number>>(new Map());
 
   useEffect(() => {
     const timers = pollTimers.current;
@@ -45,14 +52,32 @@ export function DataExportForm() {
 
   async function poll(jobId: string) {
     const response = await fetch(`/api/settings/export/${jobId}`);
-    if (!response.ok) return; // transient failure — next scheduled poll (if any) will retry
+    if (!response.ok) {
+      const failures = (pollFailureCounts.current.get(jobId) ?? 0) + 1;
+      pollFailureCounts.current.set(jobId, failures);
+      if (failures < MAX_POLL_FAILURES) {
+        schedulePoll(jobId);
+      } else {
+        setJobs((prev) =>
+          prev.map((entry) => (entry.id === jobId ? { ...entry, pollFailed: true } : entry))
+        );
+      }
+      return;
+    }
 
+    pollFailureCounts.current.delete(jobId);
     const job: ExportJob = await response.json();
-    setJobs((prev) => prev.map((entry) => (entry.id === jobId ? job : entry)));
+    setJobs((prev) => prev.map((entry) => (entry.id === jobId ? { ...job, pollFailed: false } : entry)));
 
     if (job.status === "pending" || job.status === "processing") {
       schedulePoll(jobId);
     }
+  }
+
+  function retryPoll(jobId: string) {
+    pollFailureCounts.current.delete(jobId);
+    setJobs((prev) => prev.map((entry) => (entry.id === jobId ? { ...entry, pollFailed: false } : entry)));
+    poll(jobId);
   }
 
   async function startExport(format: ExportFormat) {
@@ -96,11 +121,21 @@ export function DataExportForm() {
           {jobs.map((job) => (
             <li key={job.id} className="flex items-center justify-between gap-2 rounded-md border border-border p-2">
               <span>{FORMATS.find((f) => f.value === job.format)?.label ?? job.format}</span>
-              {(job.status === "pending" || job.status === "processing") && (
-                <span className="text-muted-foreground" role="status">
-                  Generating…
-                </span>
-              )}
+              {(job.status === "pending" || job.status === "processing") &&
+                (job.pollFailed ? (
+                  <span className="flex items-center gap-2">
+                    <span className="text-destructive" role="alert">
+                      Couldn&apos;t check export status.
+                    </span>
+                    <Button type="button" variant="outline" size="sm" onClick={() => retryPoll(job.id)}>
+                      Retry
+                    </Button>
+                  </span>
+                ) : (
+                  <span className="text-muted-foreground" role="status">
+                    Generating…
+                  </span>
+                ))}
               {job.status === "success" && job.download_url && (
                 <a href={job.download_url} className="underline">
                   Download

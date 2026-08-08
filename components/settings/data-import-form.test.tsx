@@ -105,4 +105,75 @@ describe("DataImportForm", () => {
     expect(screen.getByText(/imported 2 items, skipped 1/i)).toBeInTheDocument();
     expect(screen.getByText(/"bad item" in "inbox" was skipped/i)).toBeInTheDocument();
   });
+
+  it("a transient poll failure is retried automatically rather than freezing the job's status permanently", async () => {
+    vi.useFakeTimers();
+    upload.mockResolvedValue({ error: null });
+    const fetchMock = fetch as ReturnType<typeof vi.fn>;
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ id: "job-1", source_format: "json", status: "pending" }))
+      .mockResolvedValueOnce({ ok: false, json: async () => null })
+      .mockResolvedValueOnce(
+        jsonResponse({ id: "job-1", status: "success", created_count: 1, skipped_count: 0, skip_reasons: [] }),
+      );
+
+    render(<DataImportForm />);
+    const input = screen.getByLabelText(/import a previous export/i) as HTMLInputElement;
+
+    await act(async () => {
+      fireEvent.change(input, { target: { files: [jsonFile()] } });
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(screen.getByText(/importing/i)).toBeInTheDocument();
+
+    // First poll tick fails — still "Importing…", not a permanent freeze or a surfaced error.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+    expect(screen.getByText(/importing/i)).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+
+    // The retried poll tick succeeds.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+
+    expect(screen.getByText(/imported 1 item\b/i)).toBeInTheDocument();
+  });
+
+  it("after repeated poll failures, an inline retry action appears and resumes polling on click", async () => {
+    vi.useFakeTimers();
+    upload.mockResolvedValue({ error: null });
+    const fetchMock = fetch as ReturnType<typeof vi.fn>;
+    fetchMock.mockResolvedValueOnce(jsonResponse({ id: "job-1", source_format: "json", status: "pending" }));
+    for (let i = 0; i < 5; i += 1) {
+      fetchMock.mockResolvedValueOnce({ ok: false, json: async () => null });
+    }
+
+    render(<DataImportForm />);
+    const input = screen.getByLabelText(/import a previous export/i) as HTMLInputElement;
+
+    await act(async () => {
+      fireEvent.change(input, { target: { files: [jsonFile()] } });
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    for (let i = 0; i < 5; i += 1) {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2000);
+      });
+    }
+
+    expect(screen.getByText(/couldn't check import status/i)).toBeInTheDocument();
+    const retryButton = screen.getByRole("button", { name: "Retry" });
+
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({ id: "job-1", status: "success", created_count: 1, skipped_count: 0, skip_reasons: [] }),
+    );
+    await act(async () => {
+      fireEvent.click(retryButton);
+    });
+
+    expect(screen.getByText(/imported 1 item\b/i)).toBeInTheDocument();
+  });
 });

@@ -792,3 +792,41 @@ mocked unit tests alone):
 - [x] Import a bundle back in (one valid note + one item carrying a `javascript:` bookmark URL) →
       summary shows 1 imported / 1 skipped → the valid item's new collection appears in Collections
       → the malicious item was never created (live proof of the self-review URL-validation fix)
+
+## Accessibility pass + error/empty states (Day 6)
+
+`lib/theme/contrast.test.ts` (new):
+- [x] `--muted-foreground`-on-`--muted` (light) contrast ratio >= 4.5:1
+- [x] `text-destructive`-on-destructive-button-background (light) contrast ratio >= 4.5:1
+- [x] the two already-passing pairs (`--foreground`/`--background`, `--muted-foreground`/
+      `--background`) stay >= 4.5:1 — regression guard against a future token edit
+
+`components/auth/login-form.test.tsx` (extended):
+- [x] an invalid-email field error is rendered with `role="alert"` and linked via `aria-describedby`
+
+`components/auth/register-form.test.tsx` (extended):
+- [x] a password-too-short field error is rendered with `role="alert"`
+
+`components/notes/note-rich-text-editor.test.tsx` (extended):
+- [x] pressing Escape while the link-URL form is open closes it without inserting a link
+- [x] pressing Escape while the image-URL form is open closes it without inserting an image
+
+`components/bookmarks/bookmark-view.test.tsx` (extended):
+- [x] a poll failure after a successful initial load leaves the already-rendered bookmark visible
+      (no full-page error)
+- [x] an initial load failure (no item ever loaded) still shows the blocking error state
+- [x] a failure on the resumed poll tick after Retry is bounded-retried rather than a silent dead
+      end — self-review-caught: the resumed poll originally bypassed the bounded-retry mechanism
+
+`components/files/file-item-view.test.tsx` (extended):
+- [x] a poll failure after a successful initial load leaves the already-rendered file view visible
+      (no full-page error)
+- [x] a failed text-preview fetch renders "Preview unavailable" instead of a blank preview area
+
+`components/settings/data-export-form.test.tsx` (extended):
+- [x] a transient poll failure is retried rather than freezing the job's status permanently
+- [x] after repeated poll failures, an inline retry action appears and resumes polling on click
+
+`components/settings/data-import-form.test.tsx` (extended):
+- [x] a transient poll failure is retried rather than freezing the job's status permanently
+- [x] after repeated poll failures, an inline retry action appears and resumes polling on click

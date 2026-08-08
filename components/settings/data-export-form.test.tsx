@@ -102,4 +102,87 @@ describe("DataExportForm", () => {
       expect.objectContaining({ method: "POST", body: JSON.stringify({ format: "json" }) }),
     );
   });
+
+  it("a transient poll failure is retried automatically rather than freezing the job's status permanently", async () => {
+    vi.useFakeTimers();
+    const fetchMock = fetch as ReturnType<typeof vi.fn>;
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ id: "job-1", format: "json", status: "pending" }))
+      .mockResolvedValueOnce({ ok: false, json: async () => null })
+      .mockResolvedValueOnce(
+        jsonResponse({
+          id: "job-1",
+          format: "json",
+          status: "success",
+          download_url: "https://signed.example.com/export.json",
+        }),
+      );
+
+    render(<DataExportForm />);
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Export as JSON" }));
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(screen.getByText(/generating/i)).toBeInTheDocument();
+
+    // First poll tick fails — still "Generating…", not a permanent freeze or a surfaced error.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+    expect(screen.getByText(/generating/i)).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+
+    // The retried poll tick succeeds.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+
+    expect(screen.getByRole("link", { name: "Download" })).toHaveAttribute(
+      "href",
+      "https://signed.example.com/export.json",
+    );
+  });
+
+  it("after repeated poll failures, an inline retry action appears and resumes polling on click", async () => {
+    vi.useFakeTimers();
+    const fetchMock = fetch as ReturnType<typeof vi.fn>;
+    fetchMock.mockResolvedValueOnce(jsonResponse({ id: "job-1", format: "json", status: "pending" }));
+    for (let i = 0; i < 5; i += 1) {
+      fetchMock.mockResolvedValueOnce({ ok: false, json: async () => null });
+    }
+
+    render(<DataExportForm />);
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Export as JSON" }));
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    for (let i = 0; i < 5; i += 1) {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2000);
+      });
+    }
+
+    expect(screen.getByText(/couldn't check export status/i)).toBeInTheDocument();
+    const retryButton = screen.getByRole("button", { name: "Retry" });
+
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        id: "job-1",
+        format: "json",
+        status: "success",
+        download_url: "https://signed.example.com/export.json",
+      }),
+    );
+    await act(async () => {
+      fireEvent.click(retryButton);
+    });
+
+    expect(screen.getByRole("link", { name: "Download" })).toHaveAttribute(
+      "href",
+      "https://signed.example.com/export.json",
+    );
+  });
 });

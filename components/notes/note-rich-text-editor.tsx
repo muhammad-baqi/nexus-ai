@@ -383,7 +383,10 @@ export function NoteRichTextEditor({ content, onChange, onEditorReady }: Props) 
             placeholder="https://example.com"
             value={linkUrl}
             onChange={(e) => setLinkUrl(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && applyLink()}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") applyLink();
+              if (e.key === "Escape") setLinkFormOpen(false);
+            }}
             autoFocus
           />
           <Button type="button" size="sm" onClick={applyLink}>
@@ -398,7 +401,10 @@ export function NoteRichTextEditor({ content, onChange, onEditorReady }: Props) 
             placeholder="https://example.com/image.png"
             value={imageUrl}
             onChange={(e) => setImageUrl(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && applyImage()}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") applyImage();
+              if (e.key === "Escape") setImageFormOpen(false);
+            }}
             autoFocus
           />
           <Button type="button" size="sm" onClick={applyImage}>

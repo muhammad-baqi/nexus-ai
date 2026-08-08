@@ -111,9 +111,12 @@ export function ChangePasswordForm() {
           value={currentPassword}
           onChange={(e) => setCurrentPassword(e.target.value)}
           aria-invalid={!!fieldErrors.currentPassword}
+          aria-describedby={fieldErrors.currentPassword ? "currentPassword-error" : undefined}
         />
         {fieldErrors.currentPassword && (
-          <p className="text-destructive text-sm">{fieldErrors.currentPassword}</p>
+          <p id="currentPassword-error" role="alert" className="text-destructive text-sm">
+            {fieldErrors.currentPassword}
+          </p>
         )}
       </div>
 
@@ -126,12 +129,15 @@ export function ChangePasswordForm() {
           value={newPassword}
           onChange={(e) => setNewPassword(e.target.value)}
           aria-invalid={!!fieldErrors.newPassword}
+          aria-describedby={fieldErrors.newPassword ? "newPassword-error" : undefined}
         />
         <p className="text-muted-foreground text-sm">
           At least 8 characters, with at least one letter and one number.
         </p>
         {fieldErrors.newPassword && (
-          <p className="text-destructive text-sm">{fieldErrors.newPassword}</p>
+          <p id="newPassword-error" role="alert" className="text-destructive text-sm">
+            {fieldErrors.newPassword}
+          </p>
         )}
       </div>
 
@@ -144,9 +150,12 @@ export function ChangePasswordForm() {
           value={confirmPassword}
           onChange={(e) => setConfirmPassword(e.target.value)}
           aria-invalid={!!fieldErrors.confirmPassword}
+          aria-describedby={fieldErrors.confirmPassword ? "confirmPassword-error" : undefined}
         />
         {fieldErrors.confirmPassword && (
-          <p className="text-destructive text-sm">{fieldErrors.confirmPassword}</p>
+          <p id="confirmPassword-error" role="alert" className="text-destructive text-sm">
+            {fieldErrors.confirmPassword}
+          </p>
         )}
       </div>
 

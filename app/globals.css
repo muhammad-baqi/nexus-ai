@@ -60,10 +60,14 @@
   --secondary: oklch(0.97 0 0);
   --secondary-foreground: oklch(0.205 0 0);
   --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
+  /* 0.53 (not shadcn's default 0.556) — 0.556 fails WCAG AA (4.34:1) against --muted, the
+     badge/pill background this token is most commonly paired with; see lib/theme/contrast.ts. */
+  --muted-foreground: oklch(0.53 0 0);
   --accent: oklch(0.97 0 0);
   --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
+  /* 0.5 (not shadcn's default 0.577) — 0.577 fails WCAG AA (3.99:1) as button.tsx's destructive
+     variant text (text-destructive on bg-destructive/10); see lib/theme/contrast.ts. */
+  --destructive: oklch(0.5 0.245 27.325);
   --border: oklch(0.922 0 0);
   --input: oklch(0.922 0 0);
   --ring: oklch(0.708 0 0);

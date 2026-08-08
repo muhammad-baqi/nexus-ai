@@ -68,8 +68,13 @@ export function DeleteAccountForm() {
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           aria-invalid={!!fieldError}
+          aria-describedby={fieldError ? "deleteAccountPassword-error" : undefined}
         />
-        {fieldError && <p className="text-destructive text-sm">{fieldError}</p>}
+        {fieldError && (
+          <p id="deleteAccountPassword-error" role="alert" className="text-destructive text-sm">
+            {fieldError}
+          </p>
+        )}
       </div>
 
       {status === "wrong-password" && (

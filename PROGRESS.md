@@ -20,6 +20,91 @@ per-feature — except where self-review surfaces a real bug whose fix specifica
 proof (see Code Snippets below), in which case that one spec is run immediately rather than
 deferred. Unit/integration/component tests, typecheck, and lint remain per-feature, unchanged.
 
+**2026-08-08 — Day 6 Accessibility pass + error/empty-state sweep shipped**
+(build-order-complete.md #27's remainder — Activity Log itself shipped 2026-08-07), squash-merged
+into `develop`. Day 6 is now 13/14 — only #28 (full regression + Lighthouse + the
+`.claude/docs/qa-checklist.md` gate) remains before the v1.0 Release Candidate.
+
+An Explore audit against `docs/03_Architecture/Non_Functional_Requirements.md`'s Accessibility/
+Reliability sections found the codebase already in good shape — no unlabeled icon buttons (every
+button renders visible text or an explicit `aria-label`), no modals to audit (none exist, every
+confirm flow is inline), and every list/form already has a real empty state. Five concrete,
+verified gaps were fixed rather than a generic checklist re-derivation:
+
+1. **Two color-token pairs failed WCAG AA in light mode** — verified by computed sRGB contrast
+   ratio (new `lib/theme/contrast.ts`, a hand-rolled OKLCH→sRGB→WCAG-contrast helper, same
+   "hand-roll it, unit-test it" precedent as `lib/files/sniff-content.ts`), not by eyeballing
+   OKLCH lightness: `--muted-foreground` on `--muted` (badges, tag-remove glyph, code-block
+   syntax highlighting — 4.34:1) and `text-destructive` on the destructive `Button` variant's
+   `bg-destructive/10` background (3.99:1). Both darkened slightly in `app/globals.css` (light
+   mode only; dark mode already passed both) until `lib/theme/contrast.test.ts` — which also
+   pins the two already-passing pairs as a regression guard — goes green.
+2. **Auth form field errors weren't announced to screen readers.** All 6 forms under
+   `components/auth/` rendered field-level validation errors visibly but without `role="alert"`,
+   unlike each form's own top-level submit error. Added `id` + `role="alert"` on the error, and
+   `aria-describedby` on the paired input.
+3. **Rich-text editor's link/image inline forms had no keyboard dismiss.** Added `Escape`
+   handling in `note-rich-text-editor.tsx` alongside the existing `Enter`-to-submit.
+4. **Four background-polling surfaces silently and permanently stalled on a single failed
+   request** — `bookmark-view.tsx`'s metadata poll, `file-item-view.tsx`'s extraction-status
+   poll, and `data-export-form.tsx`/`data-import-form.tsx`'s job-status polls all had the same
+   bug shape (a bare `return;` on a failed poll fetch, with nothing left to reschedule it — a
+   stale comment on the export form even claimed "next scheduled poll will retry," which it
+   never did). Worse, the bookmark/file views' poll failure handling was routed through the same
+   `loadError` state as the *initial* load failure, so a transient blip after a successful load
+   replaced the whole already-rendered item with a full-page error, discarding real content.
+   Fixed with a bounded-retry pattern (`MAX_POLL_FAILURES = 5`) in all four: a background poll
+   failure now retries silently up to the cap rather than either dying instantly or nuking the
+   page; the export/import forms surface an inline `role="alert"` + manual Retry action once the
+   cap is hit.
+5. **`FileItemView`'s text-preview fetch failed silently** (`console.error` only, blank preview
+   area). Added a `textPreviewFailed` state rendering "Preview unavailable" (`role="status"`,
+   matching the sibling "not searchable" indicator's convention), distinct from the correct
+   silent `null` for genuinely non-previewable file types.
+
+Two lower-severity gaps the audit surfaced were deliberately left as documented scope cuts, not
+omissions: the rich-text toolbar's lack of roving-tabindex (WCAG doesn't require it — every
+button stays independently Tab+Enter/Space operable) and the Global Search recent-searches list's
+non-strict combobox ARIA semantics (it already handles Escape and click-away correctly; full
+`role="listbox"`/`aria-activedescendant` wiring is a nice-to-have, not a fix for something
+broken).
+
+Self-review (`code-reviewer` subagent) caught two real issues, both fixed: (1) `bookmark-view.tsx`'s
+`handleRetry()` (the manual metadata-retry button) resumed polling via a bare `setTimeout(load, ...)`
+that bypassed the new bounded-retry mechanism entirely — a failure on that one resumed tick would
+silently dead-end with no further retry and no surfaced error, worse than the pre-fix behavior it
+was replacing. Fixed by restructuring `loadAndSchedule` to component scope (was effect-local) so
+`handleRetry` routes through the same bounded-retry path as every other poll tick; regression test
+added. (2) `FileItemView`'s new "Preview unavailable" message used `role="alert"` while its sibling
+degraded-state indicator ("not searchable") used `role="status"` for the same category of
+non-actionable, non-urgent notice — fixed for consistency.
+
+827/827 unit/integration/component tests green (17 new, up from 810: 5 in `lib/theme/contrast.test.ts`,
+2 in `login-form.test.tsx`/`register-form.test.tsx` each, 2 in `note-rich-text-editor.test.tsx`, 3 in
+`bookmark-view.test.tsx` — including the self-review regression test — 2 in `file-item-view.test.tsx`,
+2 each in `data-export-form.test.tsx`/`data-import-form.test.tsx`), typecheck clean, lint clean (no
+new violations — the pre-existing, already-documented `react-hooks/set-state-in-effect` pattern is
+unchanged in count on every file this feature touched). No new dependency, no schema/migration
+change.
+
+Live-verified in a real browser (not just the mocked unit tests): the login form's field-level
+validation error, confirmed via the accessibility tree and `aria-describedby`/`role="alert"`
+DOM inspection — `email`'s `aria-describedby="email-error"` correctly resolves to a `role="alert"`
+element containing the message — and the darkened destructive-red text read clearly, not washed
+out, against the white login card.
+
+**Not verified this session (manual retest needed):** local Supabase failed to start this
+session (`ports are not available: exposing port TCP 0.0.0.0:54322` — a Windows port-permission
+error, not a code issue; retried once, same result) — this blocked driving any *login-gated* flow
+through a real browser: the rich-text editor's Escape-to-dismiss fix (needs an authenticated note
+page) and the bookmark/file poll-failure-doesn't-blank-the-page fix in their real rendered
+context. Both are directly exercised by their own new unit tests (each confirmed to fail against
+the pre-fix code during self-review's trace), which is real coverage but not a substitute for a
+live pass. Before this is relied on further: `npx supabase start` (may need a Windows networking
+fix first — check `netsh int ipv4 show excludedportrange protocol=tcp` or restart Docker Desktop
+if the port conflict recurs), then drive both flows through the dockerized `playwright` service
+per this repo's established pattern for login-gated verification.
+
 **2026-08-07 — Day 6 Activity Log shipped** (build-order-complete.md #27, Activity Log portion
 only), squash-merged into `develop`. Day 6 is now 11/14. **Scope note, per explicit user
 instruction this round:** #27's original prompt bundles three things — Activity Log, a full
@@ -1466,8 +1551,9 @@ CLI commands don't default to prod.
   above. The accessibility pass and error/empty-state sweep originally bundled into this same
   build-order-complete.md #27 step are deliberately deferred to #28's QA gate (explicit user
   instruction this session) — not done yet, tracked separately below.
-- [ ] Accessibility pass — keyboard nav, ARIA labeling, WCAG AA contrast (both themes)
-- [ ] Error/empty states pass across all surfaces
+- [x] Accessibility pass — keyboard nav, ARIA labeling, WCAG AA contrast (both themes) — see the
+  2026-08-08 entry above.
+- [x] Error/empty states pass across all surfaces — see the 2026-08-08 entry above.
 - [ ] Full Playwright regression + Lighthouse performance/accessibility audit
 - [ ] **v1.0 Release Candidate — staging + production** ✅
 

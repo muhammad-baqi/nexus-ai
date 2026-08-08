@@ -88,8 +88,13 @@ export function ForgotPasswordForm() {
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           aria-invalid={!!fieldError}
+          aria-describedby={fieldError ? "email-error" : undefined}
         />
-        {fieldError && <p className="text-destructive text-sm">{fieldError}</p>}
+        {fieldError && (
+          <p id="email-error" role="alert" className="text-destructive text-sm">
+            {fieldError}
+          </p>
+        )}
       </div>
 
       {status === "error" && (

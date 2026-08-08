@@ -44,6 +44,15 @@ describe("RegisterForm", () => {
     expect(signUp).not.toHaveBeenCalled();
   });
 
+  it("announces the short-password field error via role=alert, linked to the input via aria-describedby", async () => {
+    render(<RegisterForm />);
+    await fillForm("user@example.com", "ab1");
+
+    const error = await screen.findByRole("alert");
+    expect(error).toHaveTextContent(/password must be at least 8 characters/i);
+    expect(screen.getByLabelText("Password")).toHaveAttribute("aria-describedby", error.id);
+  });
+
   it("shows an inline error for mismatched passwords and never calls signUp", async () => {
     render(<RegisterForm />);
     await fillForm("user@example.com", "abcd1234", "abcd9999");

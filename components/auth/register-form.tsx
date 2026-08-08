@@ -135,9 +135,12 @@ export function RegisterForm() {
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           aria-invalid={!!fieldErrors.email}
+          aria-describedby={fieldErrors.email ? "email-error" : undefined}
         />
         {fieldErrors.email && (
-          <p className="text-destructive text-sm">{fieldErrors.email}</p>
+          <p id="email-error" role="alert" className="text-destructive text-sm">
+            {fieldErrors.email}
+          </p>
         )}
       </div>
 
@@ -150,12 +153,15 @@ export function RegisterForm() {
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           aria-invalid={!!fieldErrors.password}
+          aria-describedby={fieldErrors.password ? "password-error" : undefined}
         />
         <p className="text-muted-foreground text-sm">
           At least 8 characters, with at least one letter and one number.
         </p>
         {fieldErrors.password && (
-          <p className="text-destructive text-sm">{fieldErrors.password}</p>
+          <p id="password-error" role="alert" className="text-destructive text-sm">
+            {fieldErrors.password}
+          </p>
         )}
       </div>
 
@@ -168,9 +174,12 @@ export function RegisterForm() {
           value={confirmPassword}
           onChange={(e) => setConfirmPassword(e.target.value)}
           aria-invalid={!!fieldErrors.confirmPassword}
+          aria-describedby={fieldErrors.confirmPassword ? "confirmPassword-error" : undefined}
         />
         {fieldErrors.confirmPassword && (
-          <p className="text-destructive text-sm">{fieldErrors.confirmPassword}</p>
+          <p id="confirmPassword-error" role="alert" className="text-destructive text-sm">
+            {fieldErrors.confirmPassword}
+          </p>
         )}
       </div>
 

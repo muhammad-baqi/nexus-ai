@@ -22,6 +22,11 @@ import { isTextPreviewable } from "@/lib/files/constants";
 // is bounded (a single PDF parse), so a short poll converges quickly.
 const EXTRACTION_POLL_INTERVAL_MS = 2000;
 
+// A background poll tick failing (a transient network blip) must not blank an already-loaded
+// page — see load()'s `isPoll` param below. Bounded so a persistently-broken connection doesn't
+// poll forever; the item's last-known state (still correctly "pending") stays visible either way.
+const MAX_POLL_FAILURES = 5;
+
 type FileAsset = {
   original_filename: string;
   mime_type: string;
@@ -69,13 +74,21 @@ export function FileItemView({ itemId }: Props) {
   const [isConfirmingTrash, setIsConfirmingTrash] = useState(false);
   const [isTrashing, setIsTrashing] = useState(false);
   const [textPreview, setTextPreview] = useState<string | undefined>();
+  const [textPreviewFailed, setTextPreviewFailed] = useState(false);
 
   const pollTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const pollFailureCountRef = useRef(0);
 
-  async function load() {
+  // `isPoll` distinguishes the initial page load (no item yet — a failure is genuinely
+  // blocking) from a background extraction-status poll tick (the item already rendered
+  // successfully once — a transient failure here must not discard it, unlike the initial-load
+  // case).
+  async function load(isPoll = false) {
     const response = await fetch(`/api/items/${itemId}`);
     if (!response.ok) {
-      setLoadError("This file couldn't be loaded — it may have been removed.");
+      if (!isPoll) {
+        setLoadError("This file couldn't be loaded — it may have been removed.");
+      }
       return;
     }
     const data: ServerItem = await response.json();
@@ -85,16 +98,27 @@ export function FileItemView({ itemId }: Props) {
 
   useEffect(() => {
     let cancelled = false;
+    pollFailureCountRef.current = 0;
 
-    async function loadAndSchedule() {
-      const data = await load();
-      if (cancelled || !data) return;
+    async function loadAndSchedule(isPoll = false) {
+      const data = await load(isPoll);
+      if (cancelled) return;
+
+      if (!data) {
+        if (isPoll && pollFailureCountRef.current < MAX_POLL_FAILURES) {
+          pollFailureCountRef.current += 1;
+          pollTimerRef.current = setTimeout(() => loadAndSchedule(true), EXTRACTION_POLL_INTERVAL_MS);
+        }
+        return;
+      }
+
+      pollFailureCountRef.current = 0;
       if (data.file_asset?.extraction_status === "pending") {
-        pollTimerRef.current = setTimeout(loadAndSchedule, EXTRACTION_POLL_INTERVAL_MS);
+        pollTimerRef.current = setTimeout(() => loadAndSchedule(true), EXTRACTION_POLL_INTERVAL_MS);
       }
     }
 
-    loadAndSchedule();
+    loadAndSchedule(false);
 
     return () => {
       cancelled = true;
@@ -108,9 +132,11 @@ export function FileItemView({ itemId }: Props) {
     const asset = item?.file_asset;
     if (!asset?.download_url || !isTextPreviewable(asset.mime_type)) {
       setTextPreview(undefined);
+      setTextPreviewFailed(false);
       return;
     }
 
+    setTextPreviewFailed(false);
     fetch(asset.download_url)
       .then((response) => (response.ok ? response.text() : Promise.reject(new Error("fetch failed"))))
       .then((text) => {
@@ -118,6 +144,10 @@ export function FileItemView({ itemId }: Props) {
       })
       .catch((error) => {
         console.error("[FileItemView] text preview fetch failed:", error);
+        if (!cancelled) {
+          setTextPreview(undefined);
+          setTextPreviewFailed(true);
+        }
       });
 
     return () => {
@@ -311,7 +341,13 @@ export function FileItemView({ itemId }: Props) {
       {extractionIndicator}
       {notSearchableIndicator}
 
-      <FilePreview type={item.type} asset={asset} textPreview={textPreview} title={item.title} />
+      <FilePreview
+        type={item.type}
+        asset={asset}
+        textPreview={textPreview}
+        textPreviewFailed={textPreviewFailed}
+        title={item.title}
+      />
 
       {asset?.download_url && (
         <a
@@ -367,13 +403,14 @@ type FilePreviewProps = {
   type: Item["type"];
   asset: FileAsset | null;
   textPreview: string | undefined;
+  textPreviewFailed: boolean;
   title: string;
 };
 
 // Preview mechanics genuinely differ per type (File_Uploads.md): PDFs get an in-app viewer,
 // Images render full-size, general Files get an inline preview only where feasible (plain text)
 // and otherwise fall back to the metadata-card + Download that's already shown above this.
-function FilePreview({ type, asset, textPreview, title }: FilePreviewProps) {
+function FilePreview({ type, asset, textPreview, textPreviewFailed, title }: FilePreviewProps) {
   if (!asset?.download_url) return null;
 
   if (type === "pdf") {
@@ -409,6 +446,15 @@ function FilePreview({ type, asset, textPreview, title }: FilePreviewProps) {
       <pre className="max-h-[500px] overflow-auto rounded-lg border border-border bg-muted p-4 text-sm whitespace-pre-wrap">
         {textPreview}
       </pre>
+    );
+  }
+
+  if (textPreviewFailed) {
+    return (
+      <p className="text-muted-foreground text-sm" role="status">
+        Preview unavailable — the file content couldn&apos;t be loaded. You can still download it
+        above.
+      </p>
     );
   }
 

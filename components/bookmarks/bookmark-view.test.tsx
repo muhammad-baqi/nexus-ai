@@ -133,6 +133,53 @@ describe("BookmarkView", () => {
     expect(fetchMock).toHaveBeenCalledWith("/api/items/item-1/metadata/retry", { method: "POST" });
   });
 
+  it("a failure on the resumed poll tick after Retry is bounded-retried, not a silent dead end", async () => {
+    // Regression test for a self-review finding: the resumed poll after Retry used to bypass
+    // the bounded-retry mechanism entirely (a bare setTimeout(load, ...)), so a failure on that
+    // one tick would leave the UI stuck on "Fetching metadata…" forever with no further retry.
+    const fetchMock = fetch as ReturnType<typeof vi.fn>;
+    fetchMock.mockResolvedValue(
+      jsonResponse({
+        ...baseItem,
+        website_metadata: { ...baseItem.website_metadata, fetch_status: "failed" },
+      }),
+    );
+
+    render(<BookmarkView itemId="item-1" />);
+    await screen.findByText(/metadata unavailable/i);
+
+    vi.useFakeTimers();
+    fetchMock
+      .mockResolvedValueOnce(
+        jsonResponse({ website_metadata: { ...baseItem.website_metadata, fetch_status: "pending" } }),
+      )
+      .mockResolvedValueOnce({ ok: false, json: async () => null })
+      .mockResolvedValueOnce(
+        jsonResponse({
+          ...baseItem,
+          title: "Real Article Title",
+          website_metadata: { ...baseItem.website_metadata, fetch_status: "success" },
+        }),
+      );
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /^retry$/i }));
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(screen.getByText(/fetching metadata/i)).toBeInTheDocument();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+    expect(screen.getByText(/fetching metadata/i)).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+    expect(screen.getByText("Real Article Title")).toBeInTheDocument();
+  });
+
   it("renders no favicon/preview image and no domain link when there's no metadata at all", async () => {
     (fetch as ReturnType<typeof vi.fn>).mockResolvedValue(
       jsonResponse({ ...baseItem, website_metadata: null }),
@@ -176,6 +223,28 @@ describe("BookmarkView", () => {
         body: JSON.stringify({ title: "My custom title", description: "" }),
       }),
     );
+  });
+
+  it("a poll failure after a successful initial load leaves the already-rendered bookmark visible, not a full-page error", async () => {
+    vi.useFakeTimers();
+    const fetchMock = fetch as ReturnType<typeof vi.fn>;
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse(baseItem))
+      .mockResolvedValueOnce({ ok: false, json: async () => null });
+
+    render(<BookmarkView itemId="item-1" />);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(screen.getByText(baseItem.title)).toBeInTheDocument();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+
+    expect(screen.getByText(baseItem.title)).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
   it("shows a load error when the initial fetch fails", async () => {

@@ -211,6 +211,57 @@ describe("FileItemView", () => {
     expect(await screen.findByText("Q3 Report")).toBeInTheDocument();
   });
 
+  it("a poll failure after a successful initial load leaves the already-rendered file view visible, not a full-page error", async () => {
+    vi.useFakeTimers();
+    const fetchMock = fetch as ReturnType<typeof vi.fn>;
+    fetchMock
+      .mockResolvedValueOnce(
+        jsonResponse({ ...baseItem, file_asset: { ...baseItem.file_asset, extraction_status: "pending" } }),
+      )
+      .mockResolvedValueOnce({ ok: false, json: async () => null });
+
+    render(<FileItemView itemId="item-1" />);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(screen.getByTitle("report.pdf")).toBeInTheDocument();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+
+    expect(screen.getByTitle("report.pdf")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("renders 'Preview unavailable' when the text-preview fetch fails, distinct from a non-previewable file", async () => {
+    const fetchMock = fetch as ReturnType<typeof vi.fn>;
+    fetchMock.mockImplementation((url: string) => {
+      if (url === "https://signed.example/notes.txt") {
+        return Promise.resolve({ ok: false, json: async () => null, text: async () => "" });
+      }
+      return Promise.resolve(
+        jsonResponse({
+          ...baseItem,
+          type: "file",
+          title: "notes.txt",
+          file_asset: {
+            original_filename: "notes.txt",
+            mime_type: "text/plain",
+            size_bytes: 20,
+            extraction_status: "not_applicable",
+            download_url: "https://signed.example/notes.txt",
+          },
+        }),
+      );
+    });
+
+    render(<FileItemView itemId="item-1" />);
+
+    expect(await screen.findByText(/preview unavailable/i)).toBeInTheDocument();
+  });
+
   it("shows a load error when the initial fetch fails", async () => {
     (fetch as ReturnType<typeof vi.fn>).mockResolvedValue({ ok: false, json: async () => null });
 

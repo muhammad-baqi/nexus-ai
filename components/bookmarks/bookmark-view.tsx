@@ -18,6 +18,11 @@ import { ShareControl } from "@/components/sharing/share-control";
 // at 10s, so this converges quickly either way.
 const METADATA_POLL_INTERVAL_MS = 2000;
 
+// A background poll tick failing (a transient network blip) must not blank an already-loaded
+// page — see load()'s `isPoll` param below. Bounded so a persistently-broken connection doesn't
+// poll forever; the item's last-known state (still correctly "pending") stays visible either way.
+const MAX_POLL_FAILURES = 5;
+
 type WebsiteMetadata = {
   url: string;
   canonical_url: string | null;
@@ -67,11 +72,18 @@ export function BookmarkView({ itemId }: Props) {
   const [isTrashing, setIsTrashing] = useState(false);
 
   const pollTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const pollFailureCountRef = useRef(0);
+  const cancelledRef = useRef(false);
 
-  async function load() {
+  // `isPoll` distinguishes the initial page load (no item yet — a failure is genuinely
+  // blocking) from a background metadata poll tick (the item already rendered successfully
+  // once — a transient failure here must not discard it, unlike the initial-load case).
+  async function load(isPoll = false) {
     const response = await fetch(`/api/items/${itemId}`);
     if (!response.ok) {
-      setLoadError("This bookmark couldn't be loaded — it may have been removed.");
+      if (!isPoll) {
+        setLoadError("This bookmark couldn't be loaded — it may have been removed.");
+      }
       return;
     }
     const data: ServerItem = await response.json();
@@ -79,21 +91,34 @@ export function BookmarkView({ itemId }: Props) {
     return data;
   }
 
-  useEffect(() => {
-    let cancelled = false;
+  // Component-scoped (not effect-local) so handleRetry's resumed poll below can route through
+  // the same bounded-retry path as every other poll tick, rather than a bare one-off `load(true)`
+  // that — on failure — would silently stop with no reschedule and no surfaced error.
+  async function loadAndSchedule(isPoll = false) {
+    const data = await load(isPoll);
+    if (cancelledRef.current) return;
 
-    async function loadAndSchedule() {
-      const data = await load();
-      if (cancelled || !data) return;
-      if (data.website_metadata?.fetch_status === "pending") {
-        pollTimerRef.current = setTimeout(loadAndSchedule, METADATA_POLL_INTERVAL_MS);
+    if (!data) {
+      if (isPoll && pollFailureCountRef.current < MAX_POLL_FAILURES) {
+        pollFailureCountRef.current += 1;
+        pollTimerRef.current = setTimeout(() => loadAndSchedule(true), METADATA_POLL_INTERVAL_MS);
       }
+      return;
     }
 
-    loadAndSchedule();
+    pollFailureCountRef.current = 0;
+    if (data.website_metadata?.fetch_status === "pending") {
+      pollTimerRef.current = setTimeout(() => loadAndSchedule(true), METADATA_POLL_INTERVAL_MS);
+    }
+  }
+
+  useEffect(() => {
+    cancelledRef.current = false;
+    pollFailureCountRef.current = 0;
+    loadAndSchedule(false);
 
     return () => {
-      cancelled = true;
+      cancelledRef.current = true;
       clearTimeout(pollTimerRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -143,9 +168,12 @@ export function BookmarkView({ itemId }: Props) {
 
     const updated: { website_metadata: WebsiteMetadata } = await response.json();
     setItem((prev) => (prev ? { ...prev, website_metadata: updated.website_metadata } : prev));
-    // Resume polling — the retry just reset fetch_status back to pending.
+    // Resume polling — the retry just reset fetch_status back to pending. Routed through
+    // loadAndSchedule (not a bare load(true)) so a failure on this resumed tick gets the same
+    // bounded-retry treatment as every other poll tick, instead of silently dead-ending.
     clearTimeout(pollTimerRef.current);
-    pollTimerRef.current = setTimeout(load, METADATA_POLL_INTERVAL_MS);
+    pollFailureCountRef.current = 0;
+    pollTimerRef.current = setTimeout(() => loadAndSchedule(true), METADATA_POLL_INTERVAL_MS);
   }
 
   function handleTagsChange(tags: ItemTag[]) {
