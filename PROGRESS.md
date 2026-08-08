@@ -5,6 +5,38 @@
 > and release cadence are `docs/00_Project/Roadmap.md`.
 > `[ ]` = not started · `[~]` = in progress · `[x]` = done & committed.
 
+**2026-08-08 — 🐛 Critical bug fixed: data export/import silently dropped every item in a
+colliding collection** (`fix/import-collection-name-collision`), squash-merged into `develop`.
+Found by a targeted cross-feature-integration review (a `code-reviewer` subagent pass specifically
+looking for interactions between features that each individually shipped correctly — Trash ×
+Reminders, Trash × Sharing, Trash × Search, Collections × Items cascade, Tags × Merge × Search,
+Export/Import, Activity Log × permanent delete — 6 of 7 checked out correct; this was the one
+real finding), not from a user report.
+
+**The bug:** every account gets an "Inbox" collection from signup (`handle_new_user`,
+`001_initial_schema.sql`); every export includes it (`buildJsonExport` doesn't exclude default
+collections); import always creates *new* collections, never merging into existing ones
+(`Settings.md`'s explicit design). So re-importing an account's own export — the single most
+common real use of "export as backup" — hit `collections`' `(owner_id, lower(name)) where
+deleted_at is null` unique index on the very first collection almost every time.
+`lib/settings/jobs/run-import-job.ts`'s collection-insert error handling treated *any* insert
+failure as "skip this whole collection's items" (`skippedCount += collection.items.length`), so
+the unique-constraint violation silently dropped every item that had lived in Inbox, surfaced
+only as an opaque raw Postgres error string in the job's skip reasons. This directly contradicted
+both `Settings.md`'s own acceptance criteria (export→import should "reproduce equivalent" data)
+and its explicit design note that a second import should create a *duplicate*-named collection,
+not silently fail. No existing test caught it — the test suite's own `VALID_BUNDLE` fixture is
+literally named "Inbox," but the fake Supabase client's mocked collection insert always
+succeeded unconditionally, never modeling the real unique-constraint collision.
+
+**The fix:** `fetchExistingCollectionNames()` reads the importing account's current collection
+names once per job; `uniqueCollectionName()` disambiguates a colliding name (`"Inbox" →
+"Inbox (2)"`) before the insert, mirroring `build-markdown-export.ts`'s existing `uniqueName()`
+collision-avoidance shape for ZIP entry names, applied to both the JSON and Markdown-ZIP import
+paths. Two regression tests added (`run-import-job.test.ts`) seeding a pre-existing "Inbox" and
+confirming the import still succeeds with 0 skipped and a disambiguated collection name. 829/829
+tests green (2 new), typecheck clean.
+
 **2026-08-08 — Day 7 #29/#31 static bug-fixing/refactor + security review pass**
 (`chore/d7-requireUser-consistency`), squash-merged into `develop`. Given no real RC feedback
 exists yet (nothing has been promoted to `staging`/`main`), #29's "bug fixing from RC feedback"

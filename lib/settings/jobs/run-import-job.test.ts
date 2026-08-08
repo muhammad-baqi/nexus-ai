@@ -26,7 +26,7 @@ let updateCalls: unknown[];
 let inserted: Record<string, unknown[]>;
 let downloadMock: ReturnType<typeof vi.fn>;
 
-function createFakeSupabase() {
+function createFakeSupabase(existingCollections: { name: string }[] = []) {
   let collectionCounter = 0;
   let itemCounter = 0;
   let tagCounter = 0;
@@ -55,6 +55,9 @@ function createFakeSupabase() {
       },
       select: () => {
         if (name === "tags") return { eq: () => Promise.resolve({ data: tags, error: null }) };
+        if (name === "collections") {
+          return { eq: () => ({ is: () => Promise.resolve({ data: existingCollections, error: null }) }) };
+        }
         return { eq: () => Promise.resolve({ data: null, error: null }) };
       },
       delete: () => ({ eq: () => Promise.resolve({ data: null, error: null }) }),
@@ -150,6 +153,28 @@ describe("runImportJob — JSON", () => {
     const finalUpdate = updateCalls[updateCalls.length - 1] as Record<string, unknown>;
     expect(finalUpdate).toMatchObject({ status: "success", created_count: 2, skipped_count: 1 });
     expect((finalUpdate.skip_reasons as string[]).length).toBe(1);
+  });
+
+  it("disambiguates a collection name that collides with one the account already has (e.g. re-importing an export whose bundle includes \"Inbox\"), instead of dropping every item in it", async () => {
+    // Regression test: every account has an "Inbox" collection from signup, and every export
+    // includes it — before this fix, re-importing an account's own export would hit the
+    // (owner_id, lower(name)) unique index on the very first collection and silently skip all
+    // of its items.
+    downloadMock = vi.fn().mockResolvedValue({ data: jsonBlob(VALID_BUNDLE), error: null });
+
+    await runImportJob(
+      createFakeSupabase([{ name: "Inbox" }]) as never,
+      JOB_ID,
+      OWNER_ID,
+      "json",
+      SOURCE_PATH,
+    );
+
+    expect(inserted.collections).toHaveLength(1);
+    expect((inserted.collections[0] as { name: string }).name).not.toBe("Inbox");
+    expect(inserted.knowledge_items).toHaveLength(2);
+    const finalUpdate = updateCalls[updateCalls.length - 1] as Record<string, unknown>;
+    expect(finalUpdate).toMatchObject({ status: "success", created_count: 2, skipped_count: 0 });
   });
 
   it("resolves the job to status: 'failed', not a thrown exception, when the source isn't valid JSON", async () => {
@@ -281,6 +306,23 @@ describe("runImportJob — Markdown ZIP", () => {
     await runImportJob(createFakeSupabase() as never, JOB_ID, OWNER_ID, "markdown", SOURCE_PATH);
 
     expect(inserted.tags.map((t) => (t as { name: string }).name)).toEqual(["a,b"]);
+  });
+
+  it("disambiguates a colliding collection name the same way the JSON path does", async () => {
+    const zipBuffer = await buildMarkdownExport(VALID_BUNDLE);
+    downloadMock = vi.fn().mockResolvedValue({ data: bufferBlob(zipBuffer), error: null });
+
+    await runImportJob(
+      createFakeSupabase([{ name: "Inbox" }]) as never,
+      JOB_ID,
+      OWNER_ID,
+      "markdown",
+      SOURCE_PATH,
+    );
+
+    expect(inserted.collections).toHaveLength(1);
+    expect((inserted.collections[0] as { name: string }).name).not.toBe("Inbox");
+    expect(inserted.knowledge_items).toHaveLength(2);
   });
 
   it("resolves the job to status: 'failed' when the source is corrupt/not a ZIP", async () => {

@@ -684,6 +684,13 @@ consolidated live-browser pass):
 - [x] Markdown-ZIP import: a tag name containing a comma survives export→import as one tag, not two
       (self-review-caught: comma-joined tag serialization corrupted any tag whose own name
       contained a comma — fixed by JSON-encoding tags in frontmatter instead)
+- [x] JSON import disambiguates a collection name that collides with one the account already has
+      (e.g. re-importing an export whose bundle includes "Inbox") instead of dropping every item
+      in it — Day 7 cross-feature-integration-audit finding: every account has an Inbox collection
+      from signup, every export includes it, and import always creates *new* collections, so this
+      collided with the `(owner_id, lower(name))` unique index on the first collection almost
+      every real-world re-import, silently dropping all of its items
+- [x] Markdown-ZIP import: same collision-disambiguation as the JSON path
 
 `app/api/settings/import/route.test.ts` (new):
 - [x] POST 400s when `storage_path` isn't under the caller's own `{user.id}/imports/` prefix, no

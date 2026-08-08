@@ -70,6 +70,48 @@ export async function runImportJob(
   }
 }
 
+// Every account has at least an "Inbox" collection from signup, and every export includes it
+// (build-json-export.ts doesn't exclude default collections) — importing always creates *new*
+// collections (Settings.md's explicit design, never merges into existing ones), so re-importing
+// an account's own earlier export collides with `collections`' `(owner_id, lower(name)) where
+// deleted_at is null` unique index on the very first collection almost every time. That collision
+// used to make the whole collection's insert fail, silently dropping every item in it — fetching
+// the account's current names up front and disambiguating avoids the collision instead of
+// discovering it as a write failure.
+async function fetchExistingCollectionNames(
+  supabase: SupabaseClient,
+  ownerId: string,
+): Promise<Set<string>> {
+  const { data, error } = await supabase
+    .from("collections")
+    .select("name")
+    .eq("owner_id", ownerId)
+    .is("deleted_at", null);
+
+  if (error) {
+    console.error("[runImportJob] fetching existing collection names failed:", error);
+    return new Set();
+  }
+
+  return new Set((data ?? []).map((row) => (row as { name: string }).name.toLowerCase()));
+}
+
+// Keyed on lowercase to match the DB's `lower(name)` unique index. Mirrors
+// build-markdown-export.ts's uniqueName() collision-avoidance shape, but against the importing
+// account's actual current collection names rather than just names used within one export.
+// Mutates `usedLowercase` so a second colliding collection in the same import (or the same
+// folder name appearing twice in a Markdown ZIP) also gets disambiguated, not just the first.
+function uniqueCollectionName(desired: string, usedLowercase: Set<string>): string {
+  let candidate = desired;
+  let suffix = 2;
+  while (usedLowercase.has(candidate.toLowerCase())) {
+    candidate = `${desired} (${suffix})`;
+    suffix++;
+  }
+  usedLowercase.add(candidate.toLowerCase());
+  return candidate;
+}
+
 async function importFromJson(
   supabase: SupabaseClient,
   ownerId: string,
@@ -84,13 +126,14 @@ async function importFromJson(
   let createdCount = 0;
   let skippedCount = 0;
   const skipReasons: string[] = [];
+  const usedCollectionNames = await fetchExistingCollectionNames(supabase, ownerId);
 
   for (const collection of result.data.collections) {
     const { data: newCollection, error: collectionError } = await supabase
       .from("collections")
       .insert({
         owner_id: ownerId,
-        name: collection.name,
+        name: uniqueCollectionName(collection.name, usedCollectionNames),
         description: collection.description ?? null,
         color: collection.color ?? null,
         icon: collection.icon ?? null,
@@ -151,11 +194,12 @@ async function importFromMarkdownZip(
   let createdCount = 0;
   let skippedCount = 0;
   const skipReasons: string[] = [];
+  const usedCollectionNames = await fetchExistingCollectionNames(supabase, ownerId);
 
   for (const [folderName, filePaths] of folders) {
     const { data: newCollection, error: collectionError } = await supabase
       .from("collections")
-      .insert({ owner_id: ownerId, name: folderName })
+      .insert({ owner_id: ownerId, name: uniqueCollectionName(folderName, usedCollectionNames) })
       .select("id")
       .single();
 
