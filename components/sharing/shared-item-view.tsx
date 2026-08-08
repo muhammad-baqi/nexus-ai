@@ -3,7 +3,9 @@
 import { useEffect, useState } from "react";
 
 import { CodeEditor } from "@/components/code-snippets/code-editor";
+import { LinkEmbed } from "@/components/bookmarks/link-embed";
 import { NoteBody } from "@/components/notes/note-body";
+import { detectEmbed } from "@/lib/bookmarks/detect-embed";
 
 type SharedItem = {
   id: string;
@@ -58,6 +60,12 @@ export function SharedItemView({ token }: Props) {
     return <p className="text-muted-foreground text-sm">Loading…</p>;
   }
 
+  // Detected off `url` (what the user actually saved), never `canonical_url` — a bookmarked
+  // page's own <link rel="canonical"> is content the page owner controls, not the user, so
+  // preferring it would let any bookmarked site silently pick what video gets embedded on this
+  // public, unauthenticated share page. Matches bookmark-view.tsx's identical reasoning.
+  const embed = item.website_metadata && detectEmbed(item.website_metadata.url);
+
   return (
     <div className="flex flex-col gap-4">
       <h1 className="text-2xl font-semibold">{item.title}</h1>
@@ -66,9 +74,13 @@ export function SharedItemView({ token }: Props) {
 
       {item.type === "website" && item.website_metadata && (
         <div className="flex flex-col gap-2">
-          {item.website_metadata.og_image_url && (
-            // eslint-disable-next-line @next/next/no-img-element -- arbitrary third-party image URL, same as bookmark-view.tsx
-            <img src={item.website_metadata.og_image_url} alt="" className="max-w-full rounded-md" />
+          {embed ? (
+            <LinkEmbed url={item.website_metadata.url} title={item.title} />
+          ) : (
+            item.website_metadata.og_image_url && (
+              // eslint-disable-next-line @next/next/no-img-element -- arbitrary third-party image URL, same as bookmark-view.tsx
+              <img src={item.website_metadata.og_image_url} alt="" className="max-w-full rounded-md" />
+            )
           )}
           {item.description && <p className="whitespace-pre-wrap">{item.description}</p>}
           <a href={item.website_metadata.url} target="_blank" rel="noreferrer noopener" className="text-sm underline">

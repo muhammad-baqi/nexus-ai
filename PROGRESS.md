@@ -5,6 +5,63 @@
 > and release cadence are `docs/00_Project/Roadmap.md`.
 > `[ ]` = not started · `[~]` = in progress · `[x]` = done & committed.
 
+**2026-08-08 — Post-MVP: Rich Link Embeds shipped** (`feature/rich-link-embeds`), squash-merged
+into `develop`. First Post-MVP feature, per explicit user confirmation (AskUserQuestion) after
+Day 6 finished and Day 7's remaining items all turned out to be blocked on either a deferred
+live-testing pass or human-only release actions — nothing left to build there without one of
+those unblocking first. `docs/01_MVP/Website_Bookmarks.md` explicitly excluded "rich embeds for
+specific platforms" from MVP and pointed at `docs/02_Development/` for future direction, but no
+spec existed yet — new `docs/02_Development/Rich_Embeds.md` is that spec, written alongside the
+implementation.
+
+**Scope note, flagged to the user during planning and approved:** the original AskUserQuestion
+preview mentioned "YouTube/Vimeo player embeds + tweet/X post embeds." Tweet/X embeds were
+deliberately **not** built this round — a real tweet embed needs either trusting/rendering a
+provider's oEmbed HTML via `dangerouslySetInnerHTML` plus loading their `widgets.js` third-party
+script, or a from-scratch renderer; neither is a small, safe addition alongside YouTube/Vimeo.
+Documented as an explicit non-goal in the new spec doc, not silently dropped.
+
+New `lib/bookmarks/detect-embed.ts`: a pure function, no network call, no oEmbed dependency —
+regex-matches known YouTube (`watch?v=`, `youtu.be/`, `/shorts/`, `/embed/`) and Vimeo
+(`vimeo.com/{id}`, `player.vimeo.com/video/{id}`) URL shapes and returns a hardcoded embed URL
+(`youtube-nocookie.com`/`player.vimeo.com`) built only from a regex-captured id — the `<iframe
+src>` is always one of exactly two fixed origins, never a URL or HTML fetched from a third party
+at render time. New `components/bookmarks/link-embed.tsx` (shared by `BookmarkView` and the
+public `SharedItemView`) renders that as a plain, unsandboxed 16:9 iframe — same pattern
+`FileItemView` already uses for PDF preview — falling back to the existing OG-image card when no
+provider matches. No schema change, no migration, no new dependency.
+
+Self-review (`code-reviewer` subagent) caught one real, **content-spoofing** bug, fixed: detection
+originally preferred `website_metadata.canonical_url` over the user-saved `url`. `canonical_url`
+is scraped from the bookmarked page's own `<link rel="canonical">` — content the *page owner*
+controls, not the user — so any bookmarked site could silently pick what video got embedded
+instead of what the user actually saved, on both the owner's private view and the public,
+unauthenticated share page representing that bookmark to anyone holding the link. Fixed to detect
+off `url` only (this also let `app/api/share/[token]/route.ts`'s `canonical_url` select addition
+be reverted — no longer needed). Self-review also caught a real, lower-severity correctness bug:
+the Vimeo id regexes weren't anchored to a path-segment boundary, so a garbage-suffixed numeric
+path (e.g. `vimeo.com/123abc`) silently "succeeded" with a partial-match id instead of falling
+back like every other unrecognized URL — fixed with a lookahead anchor. Both fixed with regression
+tests.
+
+851/851 unit/integration/component tests green (23 new: 14 in `detect-embed.test.ts` — including
+the two self-review regression cases plus an explicit host-spoofing negative test
+(`youtube.com.evil.example`) — 3 in `link-embed.test.tsx`, 3 extending `bookmark-view.test.tsx`
+including its own canonical_url-spoofing regression case, and a new `shared-item-view.test.tsx`
+(2 cases) — this component had no prior unit coverage of its own, scoped here to just the embed
+behavior being added, not full retroactive coverage), typecheck clean, lint clean (no new
+violations).
+
+**Not verified this session:** local Supabase failed to start again this session (same Windows
+port-permission error as earlier — `ports are not available ... 54322`, retried once, unresolved),
+so no live-browser pass was possible (creating/viewing a real bookmark requires login). Covered by
+unit tests exercising the real detection/rendering logic (including the spoofing-fix regression
+tests, which would fail against the pre-fix code) but not a substitute for seeing an actual
+YouTube/Vimeo iframe render and play in a real browser. Before relying on this further: fix the
+local Supabase port issue, then manually save a YouTube and a Vimeo bookmark, confirm both embeds
+render and play, confirm a shared link to each also renders the embed publicly, and confirm a
+bookmark with a spoofed `<link rel="canonical">` pointing at a video does *not* embed it.
+
 **2026-08-08 — 🐛 Critical bug fixed: data export/import silently dropped every item in a
 colliding collection** (`fix/import-collection-name-collision`), squash-merged into `develop`.
 Found by a targeted cross-feature-integration review (a `code-reviewer` subagent pass specifically
@@ -1671,17 +1728,25 @@ CLI commands don't default to prod.
 
 ---
 
-## Post-MVP / Future scope — NOT scheduled
+## Post-MVP / Future scope — build only on explicit confirmation
 
-Build only after v1.0 ships, and only on explicit confirmation. Priority among these is not
-fixed — revisit based on real v1.0 usage (`docs/00_Project/Roadmap.md`, "Beyond v1.0").
+Default rule (`docs/00_Project/Roadmap.md`, "Beyond v1.0"): build only after v1.0 ships. **Deviated
+from on 2026-08-08 by explicit user decision** — Day 7's remaining checklist items were all
+blocked on either a deferred live-testing pass or human-only release actions, with no more
+concretely actionable MVP work available; the user explicitly chose (via AskUserQuestion) to start
+Post-MVP work rather than wait. Priority among these is not fixed otherwise.
 
+- [x] Rich Link Embeds (YouTube/Vimeo video embeds for bookmarks) — see the 2026-08-08 entry
+  above. Not in the original list below (Website_Bookmarks.md pointed here for "future direction"
+  with no dedicated doc); `docs/02_Development/Rich_Embeds.md` is the spec, written this round.
 - [ ] Browser extension (one-click capture) — `docs/02_Development/Browser_Extension.md`
 - [ ] Telegram notification channel — `docs/02_Development/Telegram.md`
 - [ ] AI features — auto-summary, auto-tagging, duplicate detection, related items, smart collections — `docs/02_Development/AI.md`
 - [ ] Semantic search — `docs/02_Development/Semantic_Search.md`
 - [ ] RSS feed items as a Knowledge Item type — `docs/02_Development/RSS.md`
 - [ ] GitHub repository items as a Knowledge Item type — `docs/02_Development/GitHub.md`
+- [ ] Tweet/X post embeds — deliberately deferred from Rich Link Embeds above, see that entry and
+  `docs/02_Development/Rich_Embeds.md`'s Out of Scope section for why
 
 ### Explicitly out of scope — never build without a deliberate scope decision in `Scope.md`
 

@@ -7,6 +7,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { LinkEmbed } from "@/components/bookmarks/link-embed";
+import { detectEmbed } from "@/lib/bookmarks/detect-embed";
 import { MoveItemControl } from "@/components/notes/move-item-control";
 import { TagInput, type ItemTag } from "@/components/notes/tag-input";
 import { RemindersPanel } from "@/components/reminders/reminders-panel";
@@ -245,6 +247,11 @@ export function BookmarkView({ itemId }: Props) {
   }
 
   const metadata = item.website_metadata;
+  // Detected off the URL the user actually saved, never `canonical_url` — a bookmarked page's
+  // own <link rel="canonical"> is content the *page owner* controls, not the user, so preferring
+  // it here would let any bookmarked site silently pick what video gets embedded (self-review
+  // finding: a real content-spoofing hole, not just a style choice).
+  const embed = metadata && detectEmbed(metadata.url);
 
   const statusIndicator = metadata?.fetch_status === "pending" && (
     <p className="text-muted-foreground text-sm" role="status" aria-live="polite">
@@ -345,13 +352,17 @@ export function BookmarkView({ itemId }: Props) {
       {statusIndicator}
       {failedIndicator}
 
-      {metadata?.og_image_url && (
-        // eslint-disable-next-line @next/next/no-img-element -- see favicon note above.
-        <img
-          src={metadata.og_image_url}
-          alt=""
-          className="max-h-64 w-full rounded-lg border border-border object-cover"
-        />
+      {metadata && embed ? (
+        <LinkEmbed url={metadata.url} title={item.title} />
+      ) : (
+        metadata?.og_image_url && (
+          // eslint-disable-next-line @next/next/no-img-element -- see favicon note above.
+          <img
+            src={metadata.og_image_url}
+            alt=""
+            className="max-h-64 w-full rounded-lg border border-border object-cover"
+          />
+        )
       )}
 
       <TagInput itemId={itemId} tags={item.tags} onTagsChange={handleTagsChange} />

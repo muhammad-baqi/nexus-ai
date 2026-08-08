@@ -837,3 +837,42 @@ mocked unit tests alone):
 `components/settings/data-import-form.test.tsx` (extended):
 - [x] a transient poll failure is retried rather than freezing the job's status permanently
 - [x] after repeated poll failures, an inline retry action appears and resumes polling on click
+
+## Rich Link Embeds (Post-MVP)
+
+`lib/bookmarks/detect-embed.test.ts` (new):
+- [x] `youtube.com/watch?v=ID` → correct `youtube-nocookie.com/embed/ID` URL
+- [x] `youtu.be/ID` → same
+- [x] `youtube.com/shorts/ID` → same
+- [x] extra query params (`&t=30s&list=...`) don't break ID extraction
+- [x] `vimeo.com/12345678` → correct `player.vimeo.com/video/12345678` URL
+- [x] `player.vimeo.com/video/12345678` (already an embed URL) → passes through correctly
+- [x] a Vimeo URL keeps just the numeric id, dropping a trailing privacy-hash segment
+- [x] `m.youtube.com` is also recognized
+- [x] a YouTube playlist-only URL (no video id) → `null`
+- [x] a non-video-platform URL → `null`
+- [x] empty string / malformed input → `null`, does not throw
+- [x] a garbage-suffixed numeric path (e.g. `vimeo.com/123abc`) → `null`, not a partial-match
+      embed (self-review-caught: the original unanchored digit regex accepted this)
+- [x] a lookalike host merely containing "youtube.com" (e.g. `youtube.com.evil.example`) → `null`,
+      not a match — the host check is an exact Set membership test, not a substring check
+
+`components/bookmarks/link-embed.test.tsx` (new):
+- [x] a YouTube URL renders an iframe with the youtube-nocookie `src` and the passed `title`
+- [x] a Vimeo URL renders an iframe with the player.vimeo.com `src`
+- [x] a non-matching URL renders nothing
+
+`components/bookmarks/bookmark-view.test.tsx` (extended):
+- [x] a bookmark whose saved `url` is a YouTube link renders the video iframe instead of the
+      plain OG-image card
+- [x] a bookmark with no matching embed still renders the existing OG-image behavior unchanged
+- [x] a bookmark whose `url` is a plain article but whose `canonical_url` (scraped from the page's
+      own HTML) is a YouTube link does NOT embed it — self-review-caught: `canonical_url` is
+      content the bookmarked page's owner controls, not the user, so preferring it would let any
+      page silently pick what video gets embedded
+
+`components/sharing/shared-item-view.test.tsx` (new — no test file existed for this component
+before; scoped to the embed behavior, not full retroactive coverage):
+- [x] a shared bookmark whose saved `url` is a YouTube link renders the video iframe on the
+      public share page
+- [x] a shared bookmark with no matching embed still renders the existing OG-image card

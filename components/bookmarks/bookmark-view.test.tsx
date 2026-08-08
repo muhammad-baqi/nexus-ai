@@ -191,6 +191,75 @@ describe("BookmarkView", () => {
     expect(screen.queryByRole("img")).not.toBeInTheDocument();
   });
 
+  it("renders a video embed instead of the plain OG-image card when the saved URL is a YouTube link", async () => {
+    (fetch as ReturnType<typeof vi.fn>).mockResolvedValue(
+      jsonResponse({
+        ...baseItem,
+        website_metadata: {
+          ...baseItem.website_metadata,
+          url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+          canonical_url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+          og_image_url: "https://example.com/thumbnail.jpg",
+          fetch_status: "success",
+        },
+      }),
+    );
+
+    const { container } = render(<BookmarkView itemId="item-1" />);
+
+    const iframe = await screen.findByTitle(baseItem.title);
+    expect(iframe).toHaveAttribute("src", "https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ");
+    expect(container.querySelector("img")).not.toBeInTheDocument();
+  });
+
+  it("still renders the plain OG-image card when the URL doesn't match a known embed provider", async () => {
+    (fetch as ReturnType<typeof vi.fn>).mockResolvedValue(
+      jsonResponse({
+        ...baseItem,
+        website_metadata: {
+          ...baseItem.website_metadata,
+          og_image_url: "https://example.com/thumbnail.jpg",
+          fetch_status: "success",
+        },
+      }),
+    );
+
+    const { container } = render(<BookmarkView itemId="item-1" />);
+
+    await screen.findByText(baseItem.title);
+    expect(container.querySelector("img")).toHaveAttribute(
+      "src",
+      "https://example.com/thumbnail.jpg",
+    );
+    expect(container.querySelector("iframe")).not.toBeInTheDocument();
+  });
+
+  it("does not embed a video from canonical_url when the actually-saved url isn't a video link (a bookmarked page's own <link rel=canonical> is not user-trusted)", async () => {
+    // Regression test for a self-review finding: canonical_url is scraped from the bookmarked
+    // page's own HTML, so preferring it for embed detection would let any page silently pick
+    // what video gets embedded on the owner's bookmark view.
+    (fetch as ReturnType<typeof vi.fn>).mockResolvedValue(
+      jsonResponse({
+        ...baseItem,
+        website_metadata: {
+          ...baseItem.website_metadata,
+          canonical_url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+          og_image_url: "https://example.com/thumbnail.jpg",
+          fetch_status: "success",
+        },
+      }),
+    );
+
+    const { container } = render(<BookmarkView itemId="item-1" />);
+
+    await screen.findByText(baseItem.title);
+    expect(container.querySelector("iframe")).not.toBeInTheDocument();
+    expect(container.querySelector("img")).toHaveAttribute(
+      "src",
+      "https://example.com/thumbnail.jpg",
+    );
+  });
+
   it("lets the user edit the title and description via a plain Edit/Save toggle (no autosave)", async () => {
     const fetchMock = fetch as ReturnType<typeof vi.fn>;
     fetchMock.mockResolvedValueOnce(
