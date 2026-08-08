@@ -5,6 +5,39 @@
 > and release cadence are `docs/00_Project/Roadmap.md`.
 > `[ ]` = not started · `[~]` = in progress · `[x]` = done & committed.
 
+**2026-08-08 — Day 7 #29/#31 static bug-fixing/refactor + security review pass**
+(`chore/d7-requireUser-consistency`), squash-merged into `develop`. Given no real RC feedback
+exists yet (nothing has been promoted to `staging`/`main`), #29's "bug fixing from RC feedback"
+was interpreted as a self-directed static audit rather than fixing reported issues that don't
+exist; folded together with #31's non-browser-checkable `qa-checklist.md` items, since a security
+audit and a bug pass cover overlapping ground. Findings:
+
+- **Fixed**: `app/api/settings/route.ts` (`GET`/`PATCH`) and `app/api/auth/account/route.ts`
+  (`POST`) both duplicated the auth-check logic `lib/supabase/require-user.ts`'s `requireUser()`
+  already centralizes for every other route handler — its own comment says "shared by every
+  route handler," but these two didn't use it. No behavior change, same checks/response shapes;
+  827/827 tests still green, typecheck clean.
+- **Confirmed clean, no fix needed**: `SUPABASE_SERVICE_ROLE_KEY` doesn't reach the client bundle
+  (grepped `.next/static` after a production build); no route trusts a client-supplied
+  `owner_id`/`user_id` (grepped every route handler); no raw `error.message`/`.stack` returned in
+  any API response; the sole `dangerouslySetInnerHTML` usage (`components/theme/theme-script.tsx`)
+  is a static string, not user input; `supabase/config.toml`'s auth rate limits (60s resend
+  cooldown, 2 emails/hour) match what's already documented from the earlier auth bug-fix session;
+  the one empty `catch` block (`theme-script.tsx`'s pre-hydration theme-flash-prevention script)
+  is a deliberate, standard pattern for that exact use case, not a swallowed real error.
+- Every route handler (except the two documented public ones, `GET /api/share/:token` and
+  `GET /api/cron/reminders`) calls `requireUser` or the admin client — confirmed via
+  `docs/03_Architecture/API_Design.md`'s reconciliation earlier this session plus a direct grep
+  sweep.
+
+**Not verified this session (deferred per the user's explicit 2026-08-08 prioritization call):**
+everything in `.claude/docs/qa-checklist.md` that genuinely requires a live browser or a second
+real account — RLS bypass attempts against a running API, an actual oversized/wrong-type upload,
+a forced server error checked in the Network tab, the account-enumeration / full register→
+verify→login→save→search journey, and the 🔴 "verify in the Supabase dashboard, not just by
+reading migration files" RLS check. These need the consolidated bulk-testing pass, not a fix
+here — static code reading is real signal but isn't a substitute for exercising the live system.
+
 **2026-08-08 — Day 7 #30 Full documentation pass shipped** (`chore/d7-documentation`), squash-
 merged into `develop`. Per explicit user instruction this round, Day 7 is being tackled ahead of
 a full live-browser/stress-testing QA gate on Day 6 — that testing is deliberately deferred to a
@@ -1586,14 +1619,20 @@ CLI commands don't default to prod.
 - [ ] Full Playwright regression + Lighthouse performance/accessibility audit
 - [ ] **v1.0 Release Candidate — staging + production** ✅
 
-## Day 7 — Production (v1.0) — release Sunday (1/6)
+## Day 7 — Production (v1.0) — release Sunday (2/6)
 
-- [ ] Bug fixing from RC feedback
-- [ ] Refactoring pass
+- [ ] Bug fixing from RC feedback — no real RC exists yet (nothing promoted to `staging`/`main`),
+  so nothing to fix from feedback; a self-directed static audit ran instead, see the
+  2026-08-08 entry above.
+- [x] Refactoring pass — see the 2026-08-08 entry above (requireUser consistency fix). Scoped to
+  what a static read-through surfaced, not an exhaustive whole-repo refactor.
 - [x] Full documentation (architecture, API, database, README, deployment, testing) — see the
   2026-08-08 entry above.
 - [ ] Final manual + automated regression pass
-- [ ] Security review (`.claude/docs/qa-checklist.md` full pass, all 🔴 items)
+- [ ] Security review (`.claude/docs/qa-checklist.md` full pass, all 🔴 items) — static/code-
+  reading portion done this session (see the 2026-08-08 entry above); live/browser/second-account
+  items explicitly deferred to the consolidated bulk-testing pass per this session's own
+  prioritization instruction.
 - [ ] **v1.0 released to production** 🎉
 
 **MVP = 43 features across Days 2–6 (Day 1 and Day 7 are infra/hardening, not new features).**

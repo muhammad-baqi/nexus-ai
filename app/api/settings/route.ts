@@ -1,21 +1,14 @@
 import { NextResponse, type NextRequest } from "next/server";
 
 import { signAvatarUrl } from "@/lib/supabase/avatar";
+import { requireUser } from "@/lib/supabase/require-user";
 import { createClient } from "@/lib/supabase/server";
 import { profileUpdateSchema } from "@/lib/validation/settings";
 
 export async function GET() {
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    return NextResponse.json(
-      { error: { code: "unauthenticated", message: "You must be logged in." } },
-      { status: 401 },
-    );
-  }
+  const { user, response } = await requireUser(supabase);
+  if (response) return response;
 
   const { data: profile, error } = await supabase
     .from("profiles")
@@ -52,16 +45,8 @@ export async function PATCH(request: NextRequest) {
   }
 
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    return NextResponse.json(
-      { error: { code: "unauthenticated", message: "You must be logged in." } },
-      { status: 401 },
-    );
-  }
+  const { user, response: authResponse } = await requireUser(supabase);
+  if (authResponse) return authResponse;
 
   // Storage RLS already prevents createSignedUrl from resolving a path outside the caller's own
   // folder, but a client-supplied string still shouldn't be trusted onto the row unvalidated —

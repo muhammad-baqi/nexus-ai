@@ -2,6 +2,7 @@ import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 import { NextResponse, type NextRequest } from "next/server";
 
 import { createAdminClient } from "@/lib/supabase/admin";
+import { requireUser } from "@/lib/supabase/require-user";
 import { createClient } from "@/lib/supabase/server";
 import { deleteAccountSchema } from "@/lib/validation/auth";
 
@@ -30,11 +31,10 @@ export async function POST(request: NextRequest) {
 
   // Identity always comes from the session, never a client-supplied id (.claude/rules/api-routes.md).
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const { user, response: authResponse } = await requireUser(supabase);
+  if (authResponse) return authResponse;
 
-  if (!user?.email) {
+  if (!user.email) {
     return NextResponse.json(
       { error: { code: "unauthenticated", message: "You must be logged in." } },
       { status: 401 },
