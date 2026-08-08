@@ -152,15 +152,18 @@ npm run build                                                  # production buil
 | The day-by-day build/release cadence | `docs/00_Project/Roadmap.md` |
 | What "done" means, product & engineering | `docs/00_Project/Success_Metrics.md` |
 | A specific MVP feature's exact behavior | `docs/01_MVP/<Feature>.md` (see `build-order-complete.md` for the mapping to build steps) |
+| System design at a glance — request flow, auth, background jobs | `docs/03_Architecture/Architecture_Overview.md` |
 | Tech choices and why | `docs/03_Architecture/Tech_Stack.md` |
 | Data model / RLS | `docs/03_Architecture/Database_Schema.md`, `.claude/rules/database.md` |
 | API route shape | `docs/03_Architecture/API_Design.md`, `.claude/rules/api-routes.md` |
 | Cross-cutting perf/security/a11y/reliability bar | `docs/03_Architecture/Non_Functional_Requirements.md` |
 | Branches, per-feature git flow, fix path, promotion | `.claude/docs/git-workflow.md` |
 | Testing approach, per-feature tests, `@smoke` tags | `.claude/docs/testing.md` |
+| Running the test suite locally and in CI | `docs/TESTING.md` |
 | The actual per-feature test-case lists (source of truth) | `test-cases.md` |
 | A day/release QA gate | `.claude/docs/qa-checklist.md` |
 | Env vars, accounts, Vercel/Supabase/Docker deploy specifics | `.claude/docs/infrastructure.md` |
+| The actual deploy/promotion sequence, migrations, rollback | `docs/DEPLOYMENT.md` |
 | How to prompt, and the (no-longer-OpenSpec) spec loop | `PROMPTING_AND_SDD_GUIDE.md` |
 | Installed/recommended skills | `SKILLS.md` |
 | What's built / what's next | `PROGRESS.md` |

@@ -5,6 +5,35 @@
 > and release cadence are `docs/00_Project/Roadmap.md`.
 > `[ ]` = not started · `[~]` = in progress · `[x]` = done & committed.
 
+**2026-08-08 — Day 7 #30 Full documentation pass shipped** (`chore/d7-documentation`), squash-
+merged into `develop`. Per explicit user instruction this round, Day 7 is being tackled ahead of
+a full live-browser/stress-testing QA gate on Day 6 — that testing is deliberately deferred to a
+later consolidated pass (see this session's own instruction, not repeated per-entry below).
+
+New/rewritten docs: `README.md` (was entirely about the *meta-workflow package* — "no scaffolded
+Next.js app" — stale since Day 1; rewritten to describe the actual Nexus app, quick start, and a
+real doc map), `docs/03_Architecture/Architecture_Overview.md` (new — system design at a glance:
+request lifecycle, RLS shape, background-work mechanism, search, storage), `docs/TESTING.md`
+(new — practical "how to run the suite locally and in CI" reference, distinct from
+`.claude/docs/testing.md`'s authoring-discipline doc), `docs/DEPLOYMENT.md` (new — environments,
+migrations, the actual promotion command sequence, first-deploy checklist, rollback), and a new
+`.env.example` with explanatory comments (the file itself already existed with the right keys,
+just undocumented). `docs/03_Architecture/API_Design.md` and `Database_Schema.md` were fully
+reconciled against the actual implementation (every real route handler / every migration through
+`010`, not the original Day-1 sketch) — real drift found and now documented: Search
+(`recent-searches`) and Activity Log resource groups, item-level tag routes, and three tables
+(`item_views`, `export_jobs`, `import_jobs`) all existed in code but were never in the original
+docs; the reminder cron turned out to be a real public HTTP route (not a headless scheduled
+function as originally sketched); background jobs run inline via `after()` rather than as
+separate webhooks; and `003_grant_table_privileges.sql`'s retroactive-grants fix (RLS policies
+existed from Day 1 but were inert without the underlying `GRANT`s) is now documented as its own
+subsection, a genuinely non-obvious authorization detail worth surfacing. `CLAUDE.md`'s doc index
+updated to point at the three new docs.
+
+No code changes, no tests (documentation-only). Reviewed for accuracy against this session's own
+first-hand knowledge of the features described (Reminders, Sharing, Activity Log, Settings
+export/import all shipped earlier this same session).
+
 **2026-08-05 — session-wide testing scope note.** For the remainder of Day 5 (this session),
 load/stress testing and live-browser (Playwright/`claude-in-chrome`) verification are being
 **deliberately skipped per explicit user instruction**, to keep shipping velocity up — the user
@@ -1557,11 +1586,12 @@ CLI commands don't default to prod.
 - [ ] Full Playwright regression + Lighthouse performance/accessibility audit
 - [ ] **v1.0 Release Candidate — staging + production** ✅
 
-## Day 7 — Production (v1.0) — release Sunday (0/6)
+## Day 7 — Production (v1.0) — release Sunday (1/6)
 
 - [ ] Bug fixing from RC feedback
 - [ ] Refactoring pass
-- [ ] Full documentation (architecture, API, database, README, deployment, testing)
+- [x] Full documentation (architecture, API, database, README, deployment, testing) — see the
+  2026-08-08 entry above.
 - [ ] Final manual + automated regression pass
 - [ ] Security review (`.claude/docs/qa-checklist.md` full pass, all 🔴 items)
 - [ ] **v1.0 released to production** 🎉

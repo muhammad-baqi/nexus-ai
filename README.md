@@ -1,87 +1,76 @@
-# AI Dev Workflow — Claude Code Edition
+# Nexus
 
-A concrete, tool-specific dev workflow for nexus (and, once validated, prism):
-`CLAUDE.md`, real Claude Code subagents, a **hand-written, day-by-day build
-order** (`build-order-complete.md`) for spec-driven development, Docker for
-local dev, and GitHub Actions wiring for automated review + QA. Modeled
-directly on the Droplink project's workflow package — same mechanism
-(always-loaded `CLAUDE.md` + on-demand docs + a `PROGRESS.md` source of truth
-+ one-feature-per-branch `/ship-feature` self-merge loop), re-derived for
-Nexus's actual PRD, stack, and day-based Roadmap instead of Droplink's
-phase-based one.
+A personal knowledge hub — one searchable home for notes, website bookmarks, PDFs, images,
+files, and code snippets, unified under a single "Knowledge Item" model so tagging, favoriting,
+archiving, trash, and search all work identically regardless of type.
 
-## Status: process is ready, application code is not — that's expected
+**Core promise:** save anything in under 10 seconds; find it again in under 5.
 
-There is **no scaffolded Next.js app** in here — no `package.json`, no source
-code. That's not a gap to fill by hand; it's Day 1 in `PHASES.md` /
-`build-order-complete.md`, and it's a Claude Code task like any other once the
-rest of this is in place.
+See `docs/00_Project/Mission.md` / `Vision.md` for the full product framing.
 
-## Read these first
+## Status
 
-- `SETUP_CHECKLIST.md` — Vercel/Supabase/GitHub account setup, how to keep the
-  whole thing free, how to verify Fluid Compute is doing something.
-- `PHASES.md` — Phase 0 (accounts, you) through Phase 5 (steady-state loop).
-- `build-order-complete.md` — the actual per-feature build prompts, in order,
-  day by day. This is the one you'll use the most.
-- `PROMPTING_AND_SDD_GUIDE.md` — what spec-driven development means here (the
-  hand-written loop, not OpenSpec) and prompt patterns that change output
-  quality.
-- `SKILLS.md` — how to add a skill you find, and what's recommended for this stack.
+Days 2–6 of the MVP build (`docs/00_Project/Roadmap.md`) are code-complete on `develop` — see
+`PROGRESS.md` for the exact, currently-shipped feature list. Day 7 (this pass) is documentation,
+a bug-fixing/refactor sweep, and the final security review ahead of the v1.0 release.
 
-## What's in here
+## Tech stack
 
-| File | Purpose |
+Next.js 16 (App Router) + TypeScript + Tailwind + shadcn/ui · Supabase (Postgres + Auth +
+Storage), separate project per environment · Vercel (Fluid Compute) · Vitest + Playwright ·
+Docker for local dev, matching the Linux runtime Vercel actually runs. Full rationale →
+`docs/03_Architecture/Tech_Stack.md`. System design → `docs/03_Architecture/Architecture_Overview.md`.
+
+## Quick start (local dev)
+
+Prerequisites: Docker, the [Supabase CLI](https://supabase.com/docs/guides/cli), Node.js (only
+needed for the CLI itself and `supabase` commands — the app runs inside Docker).
+
+```bash
+git clone <this repo> && cd ai-dev-workflow
+cp .env.example .env.local        # fill in real values — see docs/DEPLOYMENT.md
+git config core.hooksPath .githooks   # activates local guardrails (blocks direct staging/main pushes)
+
+npx supabase start                # local Postgres + Auth + Storage stack (needed for RLS/Auth/Storage work)
+docker compose up                 # app on http://localhost:3000
+
+docker compose exec app npm run dev        # (already running via `docker compose up`)
+docker compose exec app npm test           # unit/integration tests
+docker compose exec app npm run typecheck  # tsc --noEmit
+docker compose exec app npm run lint
+npx playwright test --grep @smoke          # or via the dockerized `playwright` compose service — see docs/TESTING.md
+```
+
+Stop cleanly at the end of a session: `docker compose down` and `npx supabase stop` — the local
+Supabase stack does not auto-stop.
+
+Full local-dev walkthrough (first-time setup, account creation, cost minimization) →
+`SETUP_CHECKLIST.md`. Deploying to staging/production → `docs/DEPLOYMENT.md`.
+
+## Documentation map
+
+| Doc | Covers |
 |---|---|
-| `CLAUDE.md` | Always-loaded brief — stack, non-negotiable rules, doc index, Docker commands. |
-| `PROGRESS.md` | Source of truth for what's actually built — tick it as `/ship-feature` ships things. |
-| `build-order-complete.md` | One copy-paste prompt per feature, in day-by-day build order. |
-| `test-cases.md` | Per-feature concrete test cases, recorded during `/ship-feature`'s plan step. |
-| `CONTRIBUTING.md` | Branch model (`develop` open/self-merge, `staging`/`main` human-only), review/QA pipeline |
-| `PHASES.md` | Sequenced Phase 0–5 to take nexus from empty repo to running app |
-| `SETUP_CHECKLIST.md` | Free-tier account setup, cost minimization, Fluid Compute test plan |
-| `PROMPTING_AND_SDD_GUIDE.md` | The hand-written spec loop + concrete prompt patterns |
-| `SKILLS.md` | How to install any skill you find, plus recommended ones for this stack |
-| `RESEARCH_NOTES.md` | Sourced answers behind the earlier design decisions |
-| `WORK_ITEM_NEXUS_VALIDATION.md` | The pilot-on-nexus, then-roll-out-to-prism work item |
-| `Dockerfile` / `docker-compose.yml` | Local dev matching the Linux runtime prod actually runs on |
-| `.claude/commands/ship-feature.md` | Plan → approve → branch → implement → self-review → verify → self-merge, one feature at a time |
-| `.claude/commands/qa-gate.md` | Day/release completion gate against `.claude/docs/qa-checklist.md` |
-| `.claude/agents/code-reviewer.md` | Review subagent — read-only, invoked locally by `/ship-feature` |
-| `.claude/agents/qa-playwright.md` | QA subagent — drives real Playwright MCP browser sessions |
-| `.claude/rules/api-routes.md`, `database.md` | Path-scoped conventions |
-| `.claude/docs/git-workflow.md` | Full branch model, per-feature flow, fix path, promotion |
-| `.claude/docs/testing.md` | Testing rhythm, `@smoke` convention, per-feature test-case discipline |
-| `.claude/docs/qa-checklist.md` | Cross-cutting security/QA checklist, 🔴 = launch blocker |
-| `.claude/docs/infrastructure.md` | Accounts, env vars, background-job mechanism, Docker/local dev |
-| `.claude/hooks/verify.sh` | Stop hook — runs typecheck + tests after every turn |
-| `.claude/settings.json` | Permission allow/deny list + the Stop hook wiring |
-| `.githooks/pre-commit`, `pre-push` | Local guardrails — blocks direct commits/pushes to `staging`/`main` |
-| `.mcp.json` | shadcn + Playwright MCP servers |
-| `.github/workflows/claude-review.yml` | Informational review comment on push to `develop` (PR-triggered for `staging`/`main`) |
-| `.github/workflows/claude-qa.yml` | Smoke suite on push to `develop`; full regression via subagent on push to `staging` |
-| `.github/PULL_REQUEST_TEMPLATE.md` | Matches the CONTRIBUTING.md checklist (used for hotfixes/manual PRs) |
-| `docs/deployment-model.md` | Dev/staging/prod + Fluid Compute specifics |
-| `docs/skill-strategy.md` | Deeper reasoning: skills vs. subagents vs. MCP servers |
-| `docs/00_Project` … `03_Architecture` | Nexus's PRD/architecture docs — the source of truth for *what* to build |
+| `CLAUDE.md` | Always-loaded engineering brief — non-negotiable rules, conventions, doc index |
+| `docs/00_Project/` | Mission, vision, personas, scope, roadmap, success metrics |
+| `docs/01_MVP/<Feature>.md` | Exact behavior spec per MVP feature |
+| `docs/03_Architecture/Architecture_Overview.md` | System design — request flow, auth, background jobs, data model at a glance |
+| `docs/03_Architecture/API_Design.md` | The actual API surface, reconciled against what was built |
+| `docs/03_Architecture/Database_Schema.md` | The actual database schema, RLS, and Storage buckets, reconciled against what was built |
+| `docs/03_Architecture/Tech_Stack.md`, `Non_Functional_Requirements.md` | Stack rationale; perf/security/a11y/reliability bar |
+| `docs/TESTING.md` | How to run the test suite locally and in CI |
+| `docs/DEPLOYMENT.md` | Environments, env vars, the promotion flow, monitoring |
+| `PROGRESS.md` | Source of truth for what's actually built |
+| `build-order-complete.md` | The day-by-day build prompts (source-of-truth build order) |
+| `test-cases.md` | Per-feature concrete test cases |
+| `.claude/docs/qa-checklist.md` | Cross-cutting security/QA checklist — 🔴 = launch blocker |
+| `.claude/docs/git-workflow.md` | Branch model, per-feature flow, promotion |
+| `PROMPTING_AND_SDD_GUIDE.md`, `SKILLS.md` | How this repo is built with Claude Code — prompting patterns, installed skills |
 
-## Quick start
+## How this repo is built
 
-1. Unzip this into a new empty GitHub repo (or `git init` it directly).
-2. Work through `SETUP_CHECKLIST.md` — Vercel Hobby, two free Supabase projects
-   (`nexus-staging`, `nexus-prod`), GitHub repo, Claude Code CLI + subscription.
-3. `git config core.hooksPath .githooks` — activates the local guardrails that
-   block direct commits/pushes to `staging`/`main`.
-4. From inside a Claude Code session, as a repo admin, say **"install the
-   GitHub app"** — sets up `CLAUDE_CODE_OAUTH_TOKEN` as a repo secret in one step.
-   Also add `STAGING_URL` once staging is deployed.
-5. Install the skills in `SKILLS.md`.
-6. Open `build-order-complete.md` and start at step 1 (machine setup) — it
-   walks through scaffolding, Supabase, and every feature after that, in
-   order, with `/ship-feature` doing the plan → implement → verify → self-merge
-   loop for each one.
-7. Watch `PROGRESS.md` fill in as features ship. Run `/qa-gate` before each
-   release day (Tue/Thu/Sat/Sun per `docs/00_Project/Roadmap.md`).
-8. Once this holds up over real commits, copy the core files into prism — see
-   `RESEARCH_NOTES.md` §1 for the one structural difference (monorepo
-   `apps/web` + `apps/admin`).
+One feature = one branch off `develop`, via **`/ship-feature`**: plan → human approves → branch
+→ implement → self-review → verify (typecheck + tests + a driven-through flow) → squash-merge
+into `develop` → tick `PROGRESS.md` → delete branch. The agent works only on `feature/*`/`fix/*`/
+`chore/*` branches and never touches `staging`/`main` — a human owns promotion, enforced by local
+git hooks (`.githooks/`) and `.claude/settings.json`. Full flow → `.claude/docs/git-workflow.md`.
