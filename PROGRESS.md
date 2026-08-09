@@ -5,6 +5,42 @@
 > and release cadence are `docs/00_Project/Roadmap.md`.
 > `[ ]` = not started · `[~]` = in progress · `[x]` = done & committed.
 
+**2026-08-09 — 🔴 Vercel deployment pipeline broken: `staging`/`main` pushes never deploy.**
+Discovered while trying to promote today's work to staging — confirmed via direct inspection
+(browser) of the Vercel dashboard and GitHub settings, not guessed:
+
+- Vercel project `nagorik3/nexus-ai`'s **Production** environment tracks the `staging` branch
+  (domain `nexus-ai-ten-puce.vercel.app`); **Preview** covers every other branch including `main`.
+  This is a **single-project setup**, not the two-Vercel-project model (`staging` tracking
+  `staging`, `production` tracking `main`, separate `nexus-staging`/`nexus-prod` Supabase projects
+  each) documented in `.claude/docs/infrastructure.md` — worth reconciling docs vs. reality, or
+  actually building the second project, before relying on `main`/production as a real target.
+- The live Production Deployment is still `f71cc7b` (Ship Day 4 performance validation) from
+  **Aug 4** — every push to `staging` since then (all of Day 5/6/7, Post-MVP Rich Link Embeds,
+  today's live-testing pass, today's visual design pass) reached GitHub correctly (verified via
+  `git log origin/staging`) but **produced zero entries** in Vercel's Deployments list — not a
+  failed build, no webhook fired at all.
+- Ruled out: browser/CDN caching (checked the deployment's own direct URL, not just the custom
+  domain), a stale project-level Git connection (disconnected/reconnected in Vercel's Git
+  settings — no change), and a stale webhook (re-pushed an empty commit after reconnecting — still
+  zero new deployments).
+- **Leading theory, not yet confirmed**: the Vercel GitHub App's installation-level *repository
+  access* (`github.com/settings/installations` → Vercel → Configure → "Repository access") may
+  not include `nexus-ai` — this is a separate setting from the per-project "Connected Git
+  Repository" status (which shows connected/green regardless), and would produce exactly this
+  symptom: GitHub never sends a webhook for a repo the App wasn't granted event access to. Blocked
+  on checking this — GitHub's installation-config page demanded a sudo-mode email verification
+  code mid-session, correctly not something to push through as the agent.
+
+**To resume**: check Vercel GitHub App's repository access list first (above). If `nexus-ai` is
+missing, add it back, then push (even an empty commit) to `staging` and confirm a new deployment
+appears. If it's already present, next step is checking GitHub's webhook Recent Deliveries for
+the Vercel webhook (org/repo `Settings → Webhooks` was empty at the org-repo level, expected for
+the GitHub-App-based integration style — the deliveries log lives inside the App installation's
+own activity, not there). Until this is fixed, **nothing merged to `develop` is actually
+reachable in a live/deployed environment** — `develop` itself has no Vercel project at all
+(by design, matches Preview-only), and `staging`'s Production deployment is 5 days stale.
+
 **2026-08-09 — Post-MVP: Visual design pass shipped** (`feature/visual-design-pass`), squash-merged
 into `develop`. Explicit user request — the app was functionally complete but visually generic;
 two concrete causes found before writing any code, not a vague "needs polish": (1) a real bug,
