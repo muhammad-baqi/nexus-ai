@@ -25,6 +25,11 @@ function waitForAutosave(page: import("@playwright/test").Page) {
 test("create a note, edit title and body, and confirm formatting persists and renders @smoke", async ({
   page,
 }) => {
+  // One long test covering register, note CRUD, formatting, reloads, and version history — the
+  // default 30s test timeout leaves little margin on this Windows/Docker dev setup's documented
+  // slow bind-mount filesystem (Next.js itself logs "Slow filesystem detected" here).
+  test.setTimeout(120_000);
+
   const uniqueEmail = `e2e-notes-${Date.now()}@example.com`;
 
   await page.goto("/register");
@@ -169,14 +174,19 @@ test("create a note, edit title and body, and confirm formatting persists and re
   await expect(page.locator('[aria-label="Favorited"]')).toBeVisible();
 
   await page.getByLabel("Add tag").fill("travel");
-  await page.getByRole("button", { name: "Add" }).click();
-  await expect(page.getByText("travel", { exact: true })).toBeVisible();
+  // exact: true — RemindersPanel's "Add reminder" button on the same page otherwise substring-
+  // matches "Add" too (getByRole name matching isn't exact by default).
+  await page.getByRole("button", { name: "Add", exact: true }).click();
+  // Not exact: the tag pill's own text is "travel×" (the remove button's "×" is a DOM sibling,
+  // not separate from the pill's accessible text) — no element's full text is ever exactly
+  // "travel" alone, so an exact match can never succeed here.
+  await expect(page.getByText("travel")).toBeVisible();
   await page.getByLabel("Add tag").fill("packing");
-  await page.getByRole("button", { name: "Add" }).click();
-  await expect(page.getByText("packing", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Add", exact: true }).click();
+  await expect(page.getByText("packing")).toBeVisible();
 
   await page.getByRole("button", { name: "Remove tag packing" }).click();
-  await expect(page.getByText("packing", { exact: true })).not.toBeVisible();
+  await expect(page.getByText("packing")).not.toBeVisible();
 
   await page.getByRole("button", { name: "Archive", exact: true }).click();
   await expect(page.getByRole("button", { name: "Unarchive" })).toBeVisible();
@@ -185,8 +195,8 @@ test("create a note, edit title and body, and confirm formatting persists and re
   await page.reload();
   await expect(page.getByRole("button", { name: "Unfavorite" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Unarchive" })).toBeVisible();
-  await expect(page.getByText("travel", { exact: true })).toBeVisible();
-  await expect(page.getByText("packing", { exact: true })).not.toBeVisible();
+  await expect(page.getByText("travel")).toBeVisible();
+  await expect(page.getByText("packing")).not.toBeVisible();
 
   // Back in the collection: archived items are excluded from the default list, and a "Show
   // archived" toggle is the only way to reach one to unarchive it (Day 4's global archived
@@ -221,7 +231,10 @@ test("create a note, edit title and body, and confirm formatting persists and re
 
   await page.goto("/collections");
   await page.getByRole("link", { name: "Inbox" }).click();
-  await page.getByRole("button", { name: /show archived/i }).click();
+  // Inbox has no items left at all now (the move above emptied it) — "Show archived" only
+  // renders when archivedCount > 0 (collection-detail-view.tsx), so there's no button to click
+  // here, just the plain empty state.
+  await expect(page.getByText("No items yet")).toBeVisible();
   await expect(page.getByRole("link", { name: /Trip planning/ })).not.toBeVisible();
 
   await page.goto("/collections");

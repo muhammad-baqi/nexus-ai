@@ -5,6 +5,92 @@
 > and release cadence are `docs/00_Project/Roadmap.md`.
 > `[ ]` = not started · `[~]` = in progress · `[x]` = done & committed.
 
+**2026-08-09 — Consolidated live-testing pass on the backlog `PROGRESS.md` had repeatedly flagged
+as "not verified this session."** No feature work — closing testing debt that accumulated across
+Days 5–7 while browser verification was deliberately deferred. Local Supabase's previously-
+blocking Windows port error (`ports are not available ... 54322`) did **not** reproduce this
+session — `npx supabase start` succeeded cleanly on the first attempt, so this was a stale/
+transient issue, not a persistent environment problem.
+
+**Full Playwright regression suite run** (not just `@smoke`, per Day 6 gate #28's own
+requirement) via the dockerized `playwright` service. Found and fixed three real, pre-existing
+bugs in the test suite itself (not the app — confirmed by reading server logs/responses at each
+failure, not just retrying):
+- `e2e/reminders.spec.ts` waited 100s (`page.waitForTimeout`) inside Playwright's default 30s
+  test timeout — could never pass as written. Added `test.setTimeout(150_000)`.
+- `e2e/code-snippets.spec.ts` clicked Save then immediately called `page.reload()` without
+  awaiting the PATCH response — the reload could race and cancel the in-flight save, loading
+  stale pre-edit data. Confirmed via a direct response-body capture (the save itself always
+  succeeded server-side; the reload just sometimes beat it). Fixed with an explicit
+  `waitForResponse` before reload.
+- `e2e/notes.spec.ts` had two real, independent bugs, both reproduced consistently (not
+  flakes) before being fixed: (1) `getByRole("button", { name: "Add" })` ambiguously matched
+  both the tag-input's "Add" button and Reminders' later-added "Add reminder" button on the same
+  page (substring matching, no `exact: true`) — fixed. (2) `getByText("travel", { exact: true })`
+  could never match, because the tag pill's own DOM text is always `"travel×"` (the remove
+  button's "×" is a sibling within the same element, not separate) — no element's full text is
+  ever exactly "travel" alone. Confirmed via a `body.innerText` dump showing the tag genuinely
+  rendered while the exact-match locator still reported "not found." Fixed by dropping
+  `exact: true` for the four tag-pill assertions. Also removed a redundant "Show archived" click
+  in a state the collection was already provably empty of any items (the button doesn't render
+  at `archivedCount === 0` — correct app behavior, not a bug) and gave the test a
+  `test.setTimeout(120_000)` given its real end-to-end scope (register → CRUD → formatting →
+  three reloads → version history → checklist → tags → move — one long, legitimately slow
+  session, not a hung test).
+
+`e2e/bulk-import-stress-test.spec.ts` (not part of `@smoke`) still fails intermittently with a
+genuine Playwright/Chromium session crash (`Protocol error: Internal server error, session
+closed`) during its heavy multi-file-upload interaction — confirmed via app server logs that this
+is a browser-process crash, not an app response error (clean 200s throughout, no server-side
+error at the crash point). Consistent with this exact test's already-documented history of
+environment-specific quirks in this Windows/Docker setup (the `crypto.randomUUID` secure-context
+workaround noted in the 2026-08-06 entry below). Not fixed — flagged as a known, pre-existing
+environment limitation, not a regression from this session's changes. Full suite otherwise: 14/15
+non-skipped specs green.
+
+**New coverage written and run live this session** (all passing, confirmed stable across repeat
+runs), closing every "not verified" gap `PROGRESS.md` had open:
+- `e2e/sharing.spec.ts` (`@smoke`) — generate a share link, read the real token/URL off the
+  POST response (`navigator.clipboard` unavailable in this insecure-context harness, same
+  documented limitation as Code Snippets' copy test), open it in a brand-new **cookie-less
+  browser context** (a real "someone else clicks this link" stand-in, stronger than an
+  unauthenticated tab sharing app state), confirm the item's content renders with no nav chrome
+  and none of the owner-only Edit/Trash controls, revoke from the owner's session, confirm the
+  same link now 404s for that same already-open visitor page.
+- `e2e/activity.spec.ts` (`@smoke`) — create/edit/trash/restore a note, confirm all four events
+  appear on `/activity`, newest-first, each correctly linked back to the item by its current
+  title.
+- `e2e/rich-link-embeds.spec.ts` (`@smoke`) — save a real YouTube and Vimeo bookmark, confirm
+  each renders as the exact hardcoded `youtube-nocookie.com`/`player.vimeo.com` iframe `src`
+  `detect-embed.ts` derives, and that the same embed renders identically on the item's public
+  share page in a fresh cookie-less context. The spoofed-`canonical_url` content-spoofing
+  regression (detect off the saved `url`, never a scraped `canonical_url`) was **not**
+  re-verified live — reproducing it honestly needs a controlled external page with a crafted
+  `<link rel="canonical">`, impractical in this harness; it remains covered by
+  `bookmark-view.test.tsx`'s unit regression test only.
+- `e2e/rich-text-escape.spec.ts` (`@smoke`) — confirms the rich-text editor's inline Image URL
+  toolbar form dismisses on Escape (the Day 6 accessibility-pass fix).
+- The bookmark/file poll-failure bounded-retry fix (silent retry up to `MAX_POLL_FAILURES`,
+  never blanking an already-rendered item) was **not** re-verified live — it requires racing
+  injected network failures against a narrow "metadata fetch still pending" window, which needs
+  request interception to reproduce reliably; disproportionate effort given it's already covered
+  by a dedicated regression unit test confirmed to fail against the pre-fix code. Still resting
+  on unit coverage only.
+- **RLS, live, via direct PostgREST calls** (two real pre-confirmed accounts created via the
+  Supabase Admin API, bypassing email confirmation for speed — not mocked, not read from
+  migration files): `export_jobs`, `import_jobs`, and `code_snippet_data` (the three tables
+  Day 5/6 entries below had flagged as "structurally identical to already-verified tables but
+  never actually checked with a second real account") all confirmed to block a second user's
+  reads **and writes** (UPDATE/DELETE both affected 0 rows) against the first user's rows,
+  querying PostgREST directly rather than through the app — a stronger check than driving the
+  UI, since it tests the RLS policy itself with nothing else in between. Test accounts and data
+  deleted afterward (`DELETE /auth/v1/admin/users/:id`, cascades).
+
+`playwright.config.ts` and app code are unchanged by this session (the notes.spec.ts fixes above
+were real test bugs, not environment tuning — an earlier attempt to paper over the "travel" tag
+failure by raising `expect.timeout` globally was tried, found not to fix it, and reverted before
+finding the real cause).
+
 **2026-08-08 — Post-MVP: Rich Link Embeds shipped** (`feature/rich-link-embeds`), squash-merged
 into `develop`. First Post-MVP feature, per explicit user confirmation (AskUserQuestion) after
 Day 6 finished and Day 7's remaining items all turned out to be blocked on either a deferred

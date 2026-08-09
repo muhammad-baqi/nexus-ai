@@ -65,7 +65,13 @@ test("create a code snippet, find it by a string inside its code, copy it, and c
   await page.getByRole("button", { name: "Edit" }).click();
   await page.getByLabel("Language").selectOption("python");
   await page.locator('[contenteditable="true"]').first().fill(editedCode);
+  // handleSave's fetch is async and unawaited from the click itself — page.reload() right after
+  // .click() can race the in-flight PATCH and cancel it mid-flight, reloading stale pre-edit data.
+  const saveResponse = page.waitForResponse(
+    (res) => res.url().includes("/api/items/") && res.request().method() === "PATCH",
+  );
   await page.getByRole("button", { name: "Save" }).click();
+  await saveResponse;
 
   await page.reload();
   await expect(page.getByText("Python")).toBeVisible();

@@ -25,6 +25,9 @@ test("attach a one-time reminder, fire it via the scheduler, and confirm trash/r
   page,
 }) => {
   test.skip(!process.env.CRON_SECRET, "CRON_SECRET must be set in the test environment to drive the scheduler route directly.");
+  // Default 30s test timeout doesn't leave room for the 100s waitForTimeout below (needed to
+  // safely clear the reminder's 90s fire-time buffer) plus the rest of the flow.
+  test.setTimeout(150_000);
 
   const uniqueEmail = `e2e-reminders-${Date.now()}@example.com`;
 
