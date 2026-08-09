@@ -1,9 +1,11 @@
 "use client";
 
+import { Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
 import { TrashedCollectionRow } from "@/components/collections/trashed-collection-row";
 import { TrashedItemRow } from "@/components/notes/trashed-item-row";
+import { Empty, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 
 type Item = { id: string; title: string };
 type Collection = { id: string; name: string };
@@ -76,7 +78,14 @@ export function TrashView() {
         </p>
       )}
       {status === "loaded" && isEmpty && (
-        <p className="text-muted-foreground text-sm">Trash is empty.</p>
+        <Empty>
+          <EmptyHeader>
+            <EmptyMedia variant="icon">
+              <Trash2 />
+            </EmptyMedia>
+            <EmptyTitle>Trash is empty.</EmptyTitle>
+          </EmptyHeader>
+        </Empty>
       )}
 
       {collections.length > 0 && (

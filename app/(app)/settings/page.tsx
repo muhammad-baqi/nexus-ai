@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 
+import { Card, CardContent } from "@/components/ui/card";
 import { signAvatarUrl } from "@/lib/supabase/avatar";
 import { createClient } from "@/lib/supabase/server";
 import { ChangePasswordForm } from "@/components/auth/change-password-form";
@@ -10,6 +11,16 @@ import { LanguageSelector } from "@/components/settings/language-selector";
 import { NotificationToggle } from "@/components/settings/notification-toggle";
 import { ProfileForm } from "@/components/settings/profile-form";
 import { ThemeToggle } from "@/components/settings/theme-toggle";
+
+// Each section component already renders its own `<h2 className="text-lg font-semibold">` —
+// this just gives that existing heading + content a real card boundary instead of a flat <hr>.
+function SettingsSection({ children }: { children: React.ReactNode }) {
+  return (
+    <Card>
+      <CardContent>{children}</CardContent>
+    </Card>
+  );
+}
 
 export const metadata: Metadata = {
   title: "Settings — Nexus",
@@ -34,42 +45,44 @@ export default async function SettingsPage() {
   }
 
   return (
-    <div className="mx-auto flex w-full max-w-lg flex-col gap-10 px-4 py-16">
+    <div className="mx-auto flex w-full max-w-lg flex-col gap-6 px-4 py-16">
       <h1 className="text-2xl font-semibold">Settings</h1>
 
-      <ProfileForm
-        initialDisplayName={profile?.display_name ?? null}
-        initialAvatarUrl={await signAvatarUrl(supabase, profile?.avatar_url ?? null)}
-        email={user!.email!}
-      />
+      <SettingsSection>
+        <ProfileForm
+          initialDisplayName={profile?.display_name ?? null}
+          initialAvatarUrl={await signAvatarUrl(supabase, profile?.avatar_url ?? null)}
+          email={user!.email!}
+        />
+      </SettingsSection>
 
-      <hr className="border-border" />
+      <SettingsSection>
+        <ThemeToggle initialPreference={profile?.theme_preference ?? "system"} />
+      </SettingsSection>
 
-      <ThemeToggle initialPreference={profile?.theme_preference ?? "system"} />
+      <SettingsSection>
+        <LanguageSelector initialPreference={profile?.language_preference ?? "en"} />
+      </SettingsSection>
 
-      <hr className="border-border" />
+      <SettingsSection>
+        <NotificationToggle initialEnabled={profile?.notification_email_enabled ?? true} />
+      </SettingsSection>
 
-      <LanguageSelector initialPreference={profile?.language_preference ?? "en"} />
+      <SettingsSection>
+        <DataExportForm />
+      </SettingsSection>
 
-      <hr className="border-border" />
+      <SettingsSection>
+        <DataImportForm />
+      </SettingsSection>
 
-      <NotificationToggle initialEnabled={profile?.notification_email_enabled ?? true} />
+      <SettingsSection>
+        <ChangePasswordForm />
+      </SettingsSection>
 
-      <hr className="border-border" />
-
-      <DataExportForm />
-
-      <hr className="border-border" />
-
-      <DataImportForm />
-
-      <hr className="border-border" />
-
-      <ChangePasswordForm />
-
-      <hr className="border-border" />
-
-      <DeleteAccountForm />
+      <SettingsSection>
+        <DeleteAccountForm />
+      </SettingsSection>
     </div>
   );
 }

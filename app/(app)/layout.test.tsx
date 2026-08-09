@@ -24,6 +24,7 @@ vi.mock("next/navigation", () => ({
     throw new Error(`NEXT_REDIRECT:${path}`);
   },
   useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }),
+  usePathname: () => "/dashboard",
 }));
 
 import AppLayout from "./layout";

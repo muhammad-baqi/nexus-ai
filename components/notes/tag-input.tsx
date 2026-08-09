@@ -2,6 +2,7 @@
 
 import { useState, type FormEvent } from "react";
 
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
@@ -77,10 +78,7 @@ export function TagInput({ itemId, tags, onTagsChange }: Props) {
     <div className="flex flex-col gap-1.5">
       <div className="flex flex-wrap items-center gap-1.5">
         {tags.map((tag) => (
-          <span
-            key={tag.id}
-            className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-xs"
-          >
+          <Badge key={tag.id} variant="secondary">
             {tag.name}
             <button
               type="button"
@@ -90,7 +88,7 @@ export function TagInput({ itemId, tags, onTagsChange }: Props) {
             >
               ×
             </button>
-          </span>
+          </Badge>
         ))}
         <form onSubmit={handleAdd} className="flex items-center gap-1">
           <Input

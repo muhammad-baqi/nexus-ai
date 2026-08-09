@@ -140,4 +140,28 @@ describe("CollectionCard", () => {
     );
     expect(onChanged).toHaveBeenCalled();
   });
+
+  // Regression guard for the edit form's `<form className="contents">` wrapper (needed so the
+  // Card/CardContent primitives' own flex layout isn't broken by the form's box) — confirms
+  // native Enter-to-submit still reaches the real <form>, not just an explicit Save click.
+  it("submits the edit form on Enter, not just a Save click", async () => {
+    const onChanged = vi.fn();
+    const fetchMock = mockFetchSequence(
+      { json: async () => ({ total: 0, by_type: {}, last_updated: null }) },
+      { json: async () => ({ ...baseCollection, name: "Trips" }) },
+    );
+    render(<CollectionCard collection={baseCollection} onChanged={onChanged} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /^edit$/i }));
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Trips" } });
+    fireEvent.submit(screen.getByLabelText("Name").closest("form")!);
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/collections/col-1",
+        expect.objectContaining({ method: "PATCH" }),
+      ),
+    );
+    expect(onChanged).toHaveBeenCalled();
+  });
 });

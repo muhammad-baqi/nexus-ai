@@ -1,7 +1,9 @@
 "use client";
 
+import { FolderOpen } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
+import { Empty, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { CollectionCard, type Collection } from "@/components/collections/collection-card";
@@ -81,13 +83,20 @@ export function CollectionsView() {
         </p>
       )}
       {status === "loaded" && visibleCollections.length === 0 && (
-        <p className="text-muted-foreground text-sm">
-          {view === "trashed"
-            ? "Trash is empty."
-            : view === "archived"
-              ? "No archived collections."
-              : "No collections match your search yet — create one above."}
-        </p>
+        <Empty>
+          <EmptyHeader>
+            <EmptyMedia variant="icon">
+              <FolderOpen />
+            </EmptyMedia>
+            <EmptyTitle>
+              {view === "trashed"
+                ? "Trash is empty."
+                : view === "archived"
+                  ? "No archived collections."
+                  : "No collections match your search yet — create one above."}
+            </EmptyTitle>
+          </EmptyHeader>
+        </Empty>
       )}
 
       <div className="flex flex-col gap-3">

@@ -1,9 +1,11 @@
 "use client";
 
 import Link from "next/link";
+import { SearchX } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import { Empty, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { buildItemsSearchParams, hasActiveFilters } from "@/lib/search/build-items-query";
@@ -419,14 +421,21 @@ export function SearchView() {
       {status === "loading" && <p className="text-muted-foreground text-sm">Searching…</p>}
 
       {status === "loaded" && items.length === 0 && (
-        <p className="text-muted-foreground text-sm">
-          {(() => {
-            const filtersOnly = hasActiveFilters({ ...filters, q: undefined });
-            if (filtersOnly) return "No results — try removing some filters.";
-            if (filters.q) return `No results for "${filters.q}".`;
-            return "No items yet — anything you create will show up here.";
-          })()}
-        </p>
+        <Empty>
+          <EmptyHeader>
+            <EmptyMedia variant="icon">
+              <SearchX />
+            </EmptyMedia>
+            <EmptyTitle>
+              {(() => {
+                const filtersOnly = hasActiveFilters({ ...filters, q: undefined });
+                if (filtersOnly) return "No results — try removing some filters.";
+                if (filters.q) return `No results for "${filters.q}".`;
+                return "No items yet — anything you create will show up here.";
+              })()}
+            </EmptyTitle>
+          </EmptyHeader>
+        </Empty>
       )}
 
       {items.length > 0 && (

@@ -1,8 +1,12 @@
 "use client";
 
 import Link from "next/link";
+import { Inbox } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { Empty, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { formatRelativeTime } from "@/lib/format/relative-time";
 
 type SectionResult<T> = { data: T; error: string | null };
@@ -81,16 +85,31 @@ function SectionShell({
   children: React.ReactNode;
 }) {
   return (
-    <div className="flex flex-col gap-2 rounded-lg border border-border p-4">
-      <h2 className="font-semibold">{title}</h2>
-      {error ? (
-        <SectionError onRetry={onRetry} />
-      ) : empty ? (
-        <p className="text-muted-foreground text-sm">{emptyMessage}</p>
-      ) : (
-        children
-      )}
-    </div>
+    <Card>
+      <CardHeader>
+        {/* A real heading, not CardTitle (a plain, non-semantic <div>) — these are genuine
+            document-outline section headings ("Recent Items", etc.), not just styled text. */}
+        <h2 className="font-heading text-base leading-snug font-medium">{title}</h2>
+      </CardHeader>
+      <CardContent>
+        {error ? (
+          <SectionError onRetry={onRetry} />
+        ) : empty ? (
+          <Empty className="border-none p-0">
+            <EmptyHeader className="gap-1.5">
+              <EmptyMedia variant="icon" className="size-6 [&_svg:not([class*='size-'])]:size-3.5">
+                <Inbox />
+              </EmptyMedia>
+              <EmptyTitle className="text-muted-foreground text-sm font-normal">
+                {emptyMessage}
+              </EmptyTitle>
+            </EmptyHeader>
+          </Empty>
+        ) : (
+          children
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -204,13 +223,9 @@ export function DashboardView() {
           {data.favorites.data && data.favorites.data.collections.length > 0 && (
             <div className="flex flex-wrap gap-1.5">
               {data.favorites.data.collections.map((collection) => (
-                <Link
-                  key={collection.id}
-                  href={`/collections/${collection.id}`}
-                  className="rounded-full bg-muted px-2 py-0.5 text-xs hover:underline"
-                >
+                <Badge key={collection.id} variant="secondary" render={<Link href={`/collections/${collection.id}`} className="hover:underline" />}>
                   ★ {collection.name}
-                </Link>
+                </Badge>
               ))}
             </div>
           )}

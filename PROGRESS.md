@@ -5,6 +5,84 @@
 > and release cadence are `docs/00_Project/Roadmap.md`.
 > `[ ]` = not started · `[~]` = in progress · `[x]` = done & committed.
 
+**2026-08-09 — Post-MVP: Visual design pass shipped** (`feature/visual-design-pass`), squash-merged
+into `develop`. Explicit user request — the app was functionally complete but visually generic;
+two concrete causes found before writing any code, not a vague "needs polish": (1) a real bug,
+`app/globals.css`'s `--font-sans: var(--font-sans)` was self-referential and resolved to nothing,
+silently falling back to the browser's default UI font app-wide instead of the Geist font
+`app/layout.tsx` actually loads; (2) the entire color-token system was 0-chroma OKLCH (pure
+grayscale, zero hue anywhere), with no elevation (flat 1px borders, no shadows), no icons outside
+one rich-text toolbar, no active-nav-state, and ad hoc bordered `<div>`s standing in for a Card
+primitive. Diagnosed by screenshotting the app live (dockerized Playwright) before touching any
+code, then planned via `EnterPlanMode` (two background Explore/Plan agents surveyed the component
+structure and drafted exact OKLCH values) and approved before implementation.
+
+Per the user's explicit direction — a single warm, confident accent, Linear/Notion-style, used
+sparingly for primary actions/active states — `app/globals.css` gained a burnt-orange/terracotta
+accent (hue 42 OKLCH: light `oklch(0.44 0.16 42)` ≈ `#952400`, dark `oklch(0.75 0.14 42)` ≈
+`#f78e64`) on `--primary`/`--primary-foreground`/`--ring`/`--sidebar-primary` (the last of which
+was previously an orphaned, unused blue shadcn-default remnant — `oklch(0.488 0.243 264.376)` —
+now consistent with the real accent), plus the font-sans fix. Values independently verified
+(not eyeballed) against this repo's own hand-rolled `lib/theme/contrast.ts` WCAG-contrast math,
+including the specific edge case that mattered: `button.tsx`'s `default` variant hovers via
+`hover:bg-primary/80`, a lighter composite that a more pastel-amber accent would have failed
+against — the chosen values clear WCAG AA 4.5:1 with real margin (5.15–8.47:1) on every pairing
+checked, including that hover state. `lib/theme/contrast.test.ts` extended with pinned light+dark
+regression cases for all of them, mirroring its existing pattern for `--destructive`.
+
+Three new `components/ui/` primitives — `card.tsx`, `badge.tsx`, `empty.tsx` — pulled from this
+project's own real `shadcn`/`base-nova` registry via `npx shadcn add` rather than hand-rolled,
+so they match the project's actual established conventions (confirmed zero new dependencies:
+everything the CLI needed, including `lucide-react` for icons, was already installed but almost
+entirely unused). Applied to: collection cards, Dashboard's six sections, all eight Settings page
+sections (replacing flat `<hr>`-separated text with real card grouping — one of the plainest
+screens pre-change), tag pills, and six empty-state spots (Collections/Trash/Search no-results,
+Dashboard's empty-section state, plus a Favorites-chip and an active-tag-filter pill left as
+direct token consumers rather than forced into Card/Badge where the shape didn't fit — item-detail
+pages (note/bookmark/snippet/file view) were deliberately *not* wrapped in Card after reading their
+actual structure, since they're flat document-style pages with no pre-existing bordered container,
+not card-shaped content; wrapping them would have been applying the plan's assumption past where it
+actually held). `components/layout/app-nav.tsx` redesigned: lucide icons per link, active-route
+highlighting (`bg-primary/10 text-primary`, `aria-current="page"`) — previously every nav link
+looked identical regardless of current page — now a client component (`usePathname()`).
+
+Self-review (`code-reviewer` subagent) caught one real finding, fixed: a hand-added Badge `accent`
+variant (`bg-primary/10 text-primary`) was never actually consumed anywhere — `app-nav.tsx`'s
+active-link state hand-rolls the identical classes directly instead, because Badge's fixed `h-5`
+pill sizing doesn't fit a nav item's larger touch target. Rather than force nav into Badge's box
+model to justify the variant, removed the unused variant and relabeled the now-more-accurately-
+described contrast test cases (the underlying `bg-primary/10` math they pin is still real coverage
+for the nav's active state, just no longer mislabeled as covering a nonexistent Badge consumer).
+Also fixed: `collection-card.tsx`'s edit-mode `<form className="contents">`-wrapped-in-Card
+indentation (cosmetic drift during the refactor) and added a regression test
+(`collection-card.test.tsx`) confirming Enter-to-submit still reaches the real `<form>` through
+the `display: contents` wrapper, not just an explicit Save-button click — the exact behavior that
+wrapper exists to preserve, previously untested.
+
+861/861 tests green (2 new: the Enter-to-submit regression above, `app-nav.test.tsx`'s new active-
+route/`aria-current` case), typecheck clean, `npm run build` clean (compiled successfully; the
+prerender step hits the same pre-existing, already-documented local-only Turbopack quirk on
+`/forgot-password` noted in the Day 2 QA gate entry — unrelated to this diff, not re-diagnosed
+here per established precedent), lint clean (only pre-existing `react-hooks/set-state-in-effect`
+instances, confirmed unchanged from before this diff). Live-verified in both light and dark mode
+via the dockerized Playwright service across Login, Dashboard, Collections, Collection detail,
+Note view (edit + view), Bookmark view, Settings, and Trash — screenshotted before and after,
+compared directly (not just described) before considering this done. One genuine mid-session
+environment gotcha, not a code bug: the Docker app container was serving a stale build through
+most of the first screenshot pass (pre-existing container already running from a prior session) —
+`docker compose restart app` resolved it; flagging since it looked exactly like "my changes didn't
+work" until diagnosed.
+
+**Not addressed, deliberately out of scope this round**: `TYPE_MARKERS`' emoji-based item-type
+icons (`collection-detail-view.tsx`) were left as-is rather than swapped to lucide icons — the
+existing code comment's rationale (avoiding an icon-*font* dependency) doesn't technically block
+lucide (SVG components, not a font), but emoji already carry some personality and swapping wasn't
+necessary to address the user's actual complaint. `search-view.tsx`'s active-tag-filter toggle
+already used `bg-primary text-primary-foreground` directly pre-change, so it picked up the new
+accent color automatically from the token change alone — left as a hand-rolled `<button>` rather
+than converted to Badge's `render` prop, since it was already visually correct with zero code
+change needed.
+
 **2026-08-09 — Consolidated live-testing pass on the backlog `PROGRESS.md` had repeatedly flagged
 as "not verified this session."** No feature work — closing testing debt that accumulated across
 Days 5–7 while browser verification was deliberately deferred. Local Supabase's previously-
